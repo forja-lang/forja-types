@@ -803,6 +803,21 @@ impl BorrowChecker {
             Expresion::LiteralNulo => Some(Tipo::Nulo),
             Expresion::LiteralExacto(_, _) => Some(Tipo::Exacto),
 
+            // `si` como elemento de una lista de argumentos (layouts
+            // condicionales): se analizan condición y ambas ramas, no produce valor.
+            Expresion::Si {
+                condicion,
+                bloque_verdadero,
+                bloque_falso,
+            } => {
+                self.analizar_expresion_con_depth(condicion, depth + 1);
+                self.analizar_declaraciones(bloque_verdadero);
+                if let Some(bloque) = bloque_falso {
+                    self.analizar_declaraciones(bloque);
+                }
+                Some(Tipo::Nulo)
+            }
+
             Expresion::Identificador {
                 nombre,
                 linea,
@@ -1067,7 +1082,7 @@ impl BorrowChecker {
                 }
                 None
             }
-            Expresion::CanalNuevo => None,
+            Expresion::CanalNuevo(_) => None,
             Expresion::Try(expr) => {
                 self.analizar_expresion_con_depth(expr, depth + 1);
                 None
@@ -2232,6 +2247,21 @@ impl TypeChecker {
             Expresion::LiteralNulo => Some(Tipo::Nulo),
             Expresion::LiteralExacto(_, _) => Some(Tipo::Exacto),
 
+            // `si` como elemento de una lista de argumentos (layouts
+            // condicionales): se analizan condición y ambas ramas, no produce valor.
+            Expresion::Si {
+                condicion,
+                bloque_verdadero,
+                bloque_falso,
+            } => {
+                self.inferir_tipo_con_depth(condicion, depth + 1);
+                self.analizar_declaraciones(bloque_verdadero);
+                if let Some(bloque) = bloque_falso {
+                    self.analizar_declaraciones(bloque);
+                }
+                Some(Tipo::Nulo)
+            }
+
             Expresion::Identificador { nombre, .. } => match nombre.as_str() {
                 "verdadero" | "falso" => Some(Tipo::Booleano),
                 _ => {
@@ -2538,7 +2568,7 @@ impl TypeChecker {
                 self.tabla.salir_ambito();
                 None
             }
-            Expresion::CanalNuevo => None,
+            Expresion::CanalNuevo(_) => None,
             Expresion::Try(expr) => {
                 let tipo_expr = self.inferir_tipo_con_depth(expr, depth + 1);
                 match tipo_expr {
