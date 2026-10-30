@@ -2,6 +2,15 @@ use crate::ast::*;
 use crate::error::{ErrorForja, ErrorTipo, Span};
 use std::collections::HashMap;
 
+/// Una sobrecarga de función: (tipos de parámetros, tipo de retorno, parámetros genéricos).
+pub type Sobrecarga = (Vec<Option<Tipo>>, Option<Tipo>, Vec<ParametroTipo>);
+
+/// Mapa nombre de función -> sus sobrecargas.
+pub type MapaSobrecargas = HashMap<String, Vec<Sobrecarga>>;
+
+/// Firma de una función nativa de la stdlib: (nombre, parámetros, retorno).
+pub type FuncionNativa = (&'static str, Vec<Option<Tipo>>, Option<Tipo>);
+
 /// Profundidad máxima de recursión para el análisis semántico.
 /// Previene stack overflow al recorrer ASTs con expresiones muy anidadas
 /// (ej: 0+1+2+...+99999 que crea un árbol binario de 100,000 niveles).
@@ -472,6 +481,12 @@ pub struct BorrowChecker {
     funciones: std::collections::HashSet<String>,
     /// Contador de ámbito actual para tracking de préstamos
     ambito_actual: usize,
+}
+
+impl Default for BorrowChecker {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl BorrowChecker {
@@ -1153,10 +1168,7 @@ pub struct TypeChecker {
     /// Cada overload: (tipos_param, tipo_retorno, parametros_tipo)
     /// Soportar múltiples overloads permite que funciones con el mismo nombre
     /// pero diferentes tipos de parámetros coexistan (sobrecarga por tipo).
-    funciones: std::collections::HashMap<
-        String,
-        Vec<(Vec<Option<Tipo>>, Option<Tipo>, Vec<ParametroTipo>)>,
-    >,
+    funciones: MapaSobrecargas,
     /// Tipos inferidos para cada variable (nombre -> tipo)
     tipos: HashMap<String, Tipo>,
     /// Definiciones de rasgos: nombre -> lista de firmas de métodos
@@ -1179,6 +1191,12 @@ pub struct TypeChecker {
     tipo_retorno_actual: Option<Tipo>,
     linea_actual: usize,
     columna_actual: usize,
+}
+
+impl Default for TypeChecker {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TypeChecker {
@@ -1207,10 +1225,7 @@ impl TypeChecker {
     /// F1-T6: API pública consumida por `lib.rs` y los tests; en el binario
     /// `forja` (que re-declara los módulos como privados) no se usa.
     #[allow(dead_code)]
-    pub fn obtener_funciones(
-        &self,
-    ) -> std::collections::HashMap<String, Vec<(Vec<Option<Tipo>>, Option<Tipo>, Vec<ParametroTipo>)>>
-    {
+    pub fn obtener_funciones(&self) -> MapaSobrecargas {
         self.funciones.clone()
     }
 
@@ -1223,7 +1238,7 @@ impl TypeChecker {
     fn resolver_sobrecarga(
         &mut self,
         nombre: &str,
-        overloads: &[(Vec<Option<Tipo>>, Option<Tipo>, Vec<ParametroTipo>)],
+        overloads: &[Sobrecarga],
         tipos_args: &[Option<Tipo>],
         linea: usize,
         columna: usize,
@@ -1234,32 +1249,32 @@ impl TypeChecker {
 
         // PASO 1: Match exacto de aridad + tipos
         for (i, (params, _, _)) in overloads.iter().enumerate() {
-            if params.len() == tipos_args.len() {
-                if tipos_args.iter().enumerate().all(|(j, arg_t)| {
-                    params[j].as_ref().map_or(false, |p_t| {
+            if params.len() == tipos_args.len()
+                && tipos_args.iter().enumerate().all(|(j, arg_t)| {
+                    params[j].as_ref().is_some_and(|p_t| {
                         arg_t
                             .as_ref()
-                            .map_or(false, |a_t| self.tipos_coinciden_exacto(a_t, p_t))
+                            .is_some_and(|a_t| self.tipos_coinciden_exacto(a_t, p_t))
                     })
-                }) {
-                    return Some(i);
-                }
+                })
+            {
+                return Some(i);
             }
         }
 
         // PASO 2: Match por aridad + compatibilidad (tipo explícito ≠ None)
         for (i, (params, _, _)) in overloads.iter().enumerate() {
-            if params.len() == tipos_args.len() {
-                if tipos_args.iter().enumerate().all(|(j, arg_t)| {
+            if params.len() == tipos_args.len()
+                && tipos_args.iter().enumerate().all(|(j, arg_t)| {
                     match &params[j] {
                         Some(p_t) => arg_t
                             .as_ref()
-                            .map_or(false, |a_t| self.tipos_son_compatibles(a_t, p_t)),
+                            .is_some_and(|a_t| self.tipos_son_compatibles(a_t, p_t)),
                         None => true, // Sin tipo explícito = comodín
                     }
-                }) {
-                    return Some(i);
-                }
+                })
+            {
+                return Some(i);
             }
         }
 
@@ -1349,7 +1364,7 @@ impl TypeChecker {
     /// cuando la stdlib las usa (ej: a_codigo, a_caracter en std/texto).
     fn registrar_funciones_nativas(&mut self) {
         // Funciones built-in de la stdlib (conocidas por la VM)
-        let nativas: Vec<(&str, Vec<Option<Tipo>>, Option<Tipo>)> = vec![
+        let nativas: Vec<FuncionNativa> = vec![
             // Funciones de conversión carácter ↔ código
             ("a_codigo", vec![Some(Tipo::Texto)], Some(Tipo::Entero)),
             ("a_caracter", vec![Some(Tipo::Entero)], Some(Tipo::Texto)),
@@ -2204,14 +2219,11 @@ impl TypeChecker {
                                     std::collections::HashMap::new();
                                 for (i, _param_tipo) in params_tipo.iter().enumerate() {
                                     if i < params.len() {
-                                        if let Some(ref param_decl) = params[i] {
-                                            if let Tipo::Parametro(ref pnombre) = param_decl {
-                                                if let Some(ref arg_tipo) =
-                                                    tipos_args.get(i).and_then(|t| t.clone())
-                                                {
-                                                    inferidos
-                                                        .insert(pnombre.clone(), arg_tipo.clone());
-                                                }
+                                        if let Some(Tipo::Parametro(ref pnombre)) = params[i] {
+                                            if let Some(ref arg_tipo) =
+                                                tipos_args.get(i).and_then(|t| t.clone())
+                                            {
+                                                inferidos.insert(pnombre.clone(), arg_tipo.clone());
                                             }
                                         }
                                     }
@@ -2373,14 +2385,11 @@ impl TypeChecker {
                                     std::collections::HashMap::new();
                                 for (i, param_decl) in params.iter().enumerate() {
                                     if i < argumentos.len() {
-                                        if let Some(ref p_tipo) = param_decl {
-                                            if let Tipo::Parametro(ref pnombre) = p_tipo {
-                                                if let Some(ref arg_tipo) =
-                                                    tipos_args.get(i).and_then(|t| t.clone())
-                                                {
-                                                    inferidos
-                                                        .insert(pnombre.clone(), arg_tipo.clone());
-                                                }
+                                        if let Some(Tipo::Parametro(ref pnombre)) = param_decl {
+                                            if let Some(ref arg_tipo) =
+                                                tipos_args.get(i).and_then(|t| t.clone())
+                                            {
+                                                inferidos.insert(pnombre.clone(), arg_tipo.clone());
                                             }
                                         }
                                     }
@@ -2895,9 +2904,9 @@ mod tests {
 
     fn analizar_source(source: &str) -> Result<(), Vec<ErrorForja>> {
         let mut lexer = Lexer::new(source);
-        let tokens = lexer.tokenize().map_err(|e| e)?;
+        let tokens = lexer.tokenize()?;
         let mut parser = Parser::new(tokens);
-        let programa = parser.parse().map_err(|e| e)?;
+        let programa = parser.parse()?;
         let mut checker = BorrowChecker::new();
         checker.analizar(&programa)
     }
@@ -3086,9 +3095,9 @@ mod type_checker_tests {
 
     fn type_checkear(source: &str) -> Result<(), Vec<ErrorForja>> {
         let mut lexer = Lexer::new(source);
-        let tokens = lexer.tokenize().map_err(|e| e)?;
+        let tokens = lexer.tokenize()?;
         let mut parser = Parser::new(tokens);
-        let programa = parser.parse().map_err(|e| e)?;
+        let programa = parser.parse()?;
         let mut tc = TypeChecker::new();
         tc.analizar(&programa)
     }
