@@ -526,9 +526,21 @@ impl BorrowChecker {
             // F5-T4: los enums son valores (sus variantes no tienen identidad
             // propia); tratarlos como no-Copy movía la variable al pasarla a
             // una función y rompía usos posteriores.
-            Some(Tipo::Clase(nombre)) => self.variantes_enum.contains_key(nombre),
+            // `Arreglo`/`Mapa`/`Funcion` escritos como tipo son nombres de
+            // builtin (`Tipo::Clase`), no clases de usuario: son referencias en
+            // el runtime y deben ser Copy. Si no, un parámetro `arr: Arreglo`
+            // quedaba "movido" en la primera llamada y el cuerpo no compilaba.
+            Some(Tipo::Clase(nombre)) => {
+                self.variantes_enum.contains_key(nombre)
+                    || matches!(nombre.as_str(), "Arreglo" | "Mapa" | "Funcion" | "Texto")
+            }
             Some(Tipo::Funcion(_, _)) => true,
-            Some(Tipo::Arreglo(_)) => false,
+            // Los arreglos son **referencias** en el runtime (mutar dentro de
+            // una función se ve en quien llamó), así que tratarlos como
+            // move-only sólo generaba falsos positivos: un parámetro
+            // `arr: Arreglo` quedaba "movido" en la primera llamada
+            // (`longitud(arr)`) y el resto de la función no compilaba.
+            Some(Tipo::Arreglo(_)) => true,
             Some(Tipo::Resultado(_, _))
             | Some(Tipo::Opcion(_))
             | Some(Tipo::RasgoObjeto(_))
