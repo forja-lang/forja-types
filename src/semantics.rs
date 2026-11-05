@@ -22,6 +22,22 @@ const MAX_AST_PROFUNDIDAD: u32 = 10000;
 /// Cubre tanto los enums de usuario (`Tipo::Clase`) como los tipos algebraicos
 /// del prelude: `Resultado<T, E>` (variantes `Ok`/`Error`) y `Opcion<T>`
 /// (variantes `Alguno`/`Ninguno`).
+/// Compatibilidad de una firma de implementación con la declarada en el rasgo.
+///
+/// El parámetro genérico del rasgo (`T`) coincide con el tipo concreto que usa
+/// la implementación (`Opcion<T>` vs `Opcion<Entero>`), y se compara de forma
+/// estructural en los tipos compuestos.
+fn firma_compatible(implementacion: &Tipo, rasgo: &Tipo) -> bool {
+    match rasgo {
+        Tipo::Parametro(_) => true,
+        Tipo::Opcion(r) => matches!(implementacion, Tipo::Opcion(i) if firma_compatible(i, r)),
+        Tipo::Resultado(rr, re) => matches!(implementacion, Tipo::Resultado(ir, ie)
+            if firma_compatible(ir, rr) && firma_compatible(ie, re)),
+        Tipo::Arreglo(r) => matches!(implementacion, Tipo::Arreglo(i) if firma_compatible(i, r)),
+        _ => implementacion == rasgo,
+    }
+}
+
 fn nombre_enum_para_exhaustividad(tipo: &Tipo) -> Option<&str> {
     match tipo {
         Tipo::Clase(nombre) => Some(nombre.as_str()),
@@ -52,7 +68,7 @@ fn extraer_variables_patron(patron: &Patron) -> Vec<String> {
     }
 }
 
-/// F4-T4: determina si una asignación entre dos tipos **primitivos** es
+/// determina si una asignación entre dos tipos **primitivos** es
 /// incompatible (para reportar el error temprano). Es conservadora: solo se
 /// pronuncia cuando ambos tipos son primitivos concretos y no hay promoción
 /// numérica posible; cualquier otro caso (clases, arreglos, `Resultado`,
@@ -371,7 +387,19 @@ impl TablaSimbolos {
         })?;
 
         match info.estado {
-            EstadoVariable::Viva | EstadoVariable::PrestadaInmutable(_) | EstadoVariable::PrestadaMutable => Ok(()),
+            EstadoVariable::Viva | EstadoVariable::PrestadaInmutable(_) => Ok(()),
+            // un préstamo mutable es exclusivo: mientras viva no se
+            // puede leer el original (sólo a través del prestado).
+            EstadoVariable::PrestadaMutable => Err(ErrorForja::new(
+                ErrorTipo::ErrorDePropiedad,
+                linea,
+                columna,
+                &format!(
+                    "No se puede leer '{}' porque tiene un préstamo mutable activo.",
+                    nombre
+                ),
+                "Leé a través de la variable que tomó el préstamo, o esperá a que el ámbito termine.",
+            )),
             EstadoVariable::Movida => Err(ErrorForja::new(
                 ErrorTipo::ErrorDePropiedad,
                 linea,
@@ -481,6 +509,11 @@ pub struct BorrowChecker {
     funciones: std::collections::HashSet<String>,
     /// Contador de ámbito actual para tracking de préstamos
     ambito_actual: usize,
+    /// modo estricto. Sólo ahí `nuevo C()` tiene tipo conocido y
+    /// por lo tanto las clases se mueven al asignar. Apagado, `Instanciacion`
+    /// devuelve `None` (Copy) como siempre: el runtime comparte por índice y
+    /// marcar moves rompía ejemplos reales (107, 190).
+    estricto: bool,
 }
 
 impl Default for BorrowChecker {
@@ -498,7 +531,22 @@ impl BorrowChecker {
             variantes_enum: HashMap::new(),
             funciones: std::collections::HashSet::new(),
             ambito_actual: 0,
+            estricto: false,
         }
+    }
+
+    /// Activa el modo estricto de ownership (lo hace `--estricto` /
+    /// `estricto: true` de `forja.yaml` vía [`BorrowChecker::con_estricto`]).
+    pub fn set_estricto(&mut self, activo: bool) {
+        self.estricto = activo;
+    }
+
+    /// Igual que `new()` con el modo estricto ya fijado (la CLI lo lee de
+    /// `forja.yaml`).
+    pub fn con_estricto(activo: bool) -> Self {
+        let mut bc = Self::new();
+        bc.set_estricto(activo);
+        bc
     }
 
     /// Analiza el AST completo para verificar ownership y semántica
@@ -508,7 +556,7 @@ impl BorrowChecker {
             if let Declaracion::Funcion { nombre, .. } = decl {
                 self.funciones.insert(nombre.clone());
             }
-            // F5-T4: las variantes deben conocerse aunque se usen antes de su
+            // las variantes deben conocerse aunque se usen antes de su
             // declaración textual en el mismo programa.
             if let Declaracion::Enum {
                 nombre, variantes, ..
@@ -538,7 +586,7 @@ impl BorrowChecker {
             None => true, // Si no sabemos el tipo, asumimos Copy (seguro)
             Some(Tipo::Entero) | Some(Tipo::Decimal) | Some(Tipo::Booleano) | Some(Tipo::Nulo)
             | Some(Tipo::Exacto) | Some(Tipo::Texto) => true,
-            // F5-T4: los enums son valores (sus variantes no tienen identidad
+            // los enums son valores (sus variantes no tienen identidad
             // propia); tratarlos como no-Copy movía la variable al pasarla a
             // una función y rompía usos posteriores.
             // `Arreglo`/`Mapa`/`Funcion` escritos como tipo son nombres de
@@ -556,10 +604,30 @@ impl BorrowChecker {
             // `arr: Arreglo` quedaba "movido" en la primera llamada
             // (`longitud(arr)`) y el resto de la función no compilaba.
             Some(Tipo::Arreglo(_)) => true,
-            Some(Tipo::Resultado(_, _))
-            | Some(Tipo::Opcion(_))
-            | Some(Tipo::RasgoObjeto(_))
-            | Some(Tipo::Parametro(_)) => false,
+            Some(Tipo::Resultado(_, _)) | Some(Tipo::Opcion(_)) | Some(Tipo::RasgoObjeto(_)) => {
+                false
+            }
+            // un valor de tipo genérico (`T`) **no** se mueve al
+            // pasarlo como argumento. Antes era `false` y cualquier función
+            // genérica que delegara en otra (`identidad(valor)`) fallaba con
+            // "la variable 'valor' ya fue movida" usando el parámetro una sola
+            // vez. El runtime comparte la representación (índices), así que
+            // tratarlo como Copy es coherente con `Arreglo`/`Clase`.
+            Some(Tipo::Parametro(_)) => true,
+        }
+    }
+
+    /// Un `&x`/`&mut x` pasado como argumento es un préstamo **temporal**: la
+    /// función lo usa y lo devuelve, así que deja de estar prestado al volver
+    /// de la llamada (no hace falta NLL para esto). Sin liberarlo, el uso
+    /// posterior de `x` fallaba con "tiene un préstamo activo".
+    fn liberar_referencia_temporal(&mut self, arg: &Expresion) {
+        if let Expresion::Referencia { expr, mutable } = arg {
+            if let Expresion::Identificador { nombre, .. } = expr.as_ref() {
+                if !self.funciones.contains(nombre.as_str()) {
+                    self.tabla.liberar_prestamo(nombre, *mutable);
+                }
+            }
         }
     }
 
@@ -752,6 +820,8 @@ impl BorrowChecker {
                     // Por ahora, pasar argumentos a funciones NO mueve (son Copy)
                     // En el futuro, si el tipo no implementa Copy, será un move
                     self.analizar_expresion(arg);
+                    // Los `&x`/`&mut x` pasados a una llamada son temporales.
+                    self.liberar_referencia_temporal(arg);
                 }
             }
 
@@ -798,7 +868,7 @@ impl BorrowChecker {
         }
     }
 
-    /// Devuelve el nombre del enum al que pertenece una variante (F5-T4).
+    /// Devuelve el nombre del enum al que pertenece una variante.
     fn enum_de_variante(&self, nombre: &str) -> Option<String> {
         self.variantes_enum
             .iter()
@@ -850,7 +920,7 @@ impl BorrowChecker {
                 linea,
                 columna,
             } => {
-                // F5-T4: las funciones pueden usarse como valores (callbacks) y
+                // las funciones pueden usarse como valores (callbacks) y
                 // las variantes de enum son constructoras, no variables.
                 if self.funciones.contains(nombre.as_str()) {
                     return None;
@@ -897,6 +967,7 @@ impl BorrowChecker {
                     // escribir() solo lee valores, no mueve
                     for arg in argumentos {
                         self.analizar_expresion_con_depth(arg, depth + 1);
+                        self.liberar_referencia_temporal(arg);
                     }
                 } else {
                     for arg in argumentos {
@@ -907,18 +978,21 @@ impl BorrowChecker {
                         } = arg
                         {
                             // Solo mover si el tipo NO es Copy
-                            let es_copy = self
-                                .tabla
-                                .obtener(id)
-                                .map(|info| self.es_copy(&info.tipo))
-                                .unwrap_or(true);
-                            if !es_copy {
+                            let info_tipo = self.tabla.obtener(id).and_then(|i| i.tipo.clone());
+                            let es_copy = self.es_copy(&info_tipo);
+                            // pasar una clase a una función NO la mueve:
+                            // el runtime la comparte por índice (igual criterio que
+                            // `Arreglo`, `semantics.rs:752`). Asi `--estricto` no
+                            // rompe programas que pasan el mismo objeto dos veces.
+                            let es_clase = matches!(info_tipo, Some(Tipo::Clase(_)));
+                            if !es_copy && !es_clase {
                                 if let Err(e) = self.tabla.mover_variable(id, *linea, *columna) {
                                     self.errores.push(e);
                                 }
                             }
                         }
                         self.analizar_expresion_con_depth(arg, depth + 1);
+                        self.liberar_referencia_temporal(arg);
                     }
                 }
                 None
@@ -929,11 +1003,19 @@ impl BorrowChecker {
                 None
             }
 
-            Expresion::Instanciacion { argumentos, .. } => {
+            Expresion::Instanciacion { clase, argumentos } => {
                 for arg in argumentos {
                     self.analizar_expresion_con_depth(arg, depth + 1);
                 }
-                None
+                // sin el tipo, `variable a = nuevo C()` quedaba como
+                // `None` (Copy) y `variable b = a` no registraba el move. Sólo
+                // en modo estricto: fuera de él marcar moves de clases rompe
+                // ejemplos que comparten objetos (el runtime usa índices).
+                if self.estricto {
+                    Some(Tipo::Clase(clase.clone()))
+                } else {
+                    None
+                }
             }
 
             Expresion::Referencia { expr: e, mutable } => {
@@ -945,14 +1027,15 @@ impl BorrowChecker {
                 {
                     // Si es una función, permitir la referencia sin validar en tabla de variables
                     if !self.funciones.contains(nombre.as_str()) {
+                        // `prestar_variable` ya valida que exista; no se
+                        // vuelve a leer, porque leer bajo un préstamo mutable
+                        // es error (y `&mut x` sería siempre inválido).
                         if let Err(err) = self
                             .tabla
                             .prestar_variable(nombre, *mutable, *linea, *columna)
                         {
                             self.errores.push(err);
                         }
-                        // Solo analizar recursivamente si NO es función (evitar error de variable no declarada)
-                        self.analizar_expresion_con_depth(e, depth + 1);
                     }
                 } else {
                     self.analizar_expresion_con_depth(e, depth + 1);
@@ -999,7 +1082,9 @@ impl BorrowChecker {
                         for brazo in brazos {
                             match &brazo.patron {
                                 Patron::Constructor(nombre, _) => {
-                                    if let Some(pos) = variantes.iter().position(|v| v == nombre) {
+                                    if let Some(pos) = variantes.iter().position(|v| {
+                                        variante_canonica(v) == variante_canonica(nombre)
+                                    }) {
                                         cubiertas[pos] = true;
                                     }
                                 }
@@ -1136,6 +1221,15 @@ impl BorrowChecker {
                 self.analizar_expresion_con_depth(valor, depth + 1);
                 None
             }
+            Expresion::AsignacionCompuesta {
+                objetivo,
+                operador: _,
+                valor,
+            } => {
+                let tipo_objetivo = self.analizar_expresion_con_depth(objetivo, depth + 1);
+                self.analizar_expresion_con_depth(valor, depth + 1);
+                tipo_objetivo
+            }
             Expresion::Ok(expr) | Expresion::Error(expr) | Expresion::Algo(expr) => {
                 self.analizar_expresion_con_depth(expr, depth + 1);
                 None
@@ -1177,12 +1271,12 @@ pub struct TypeChecker {
     tipos_param_genericos: std::collections::HashMap<String, Tipo>,
     /// Mapa: nombre_del_tipo → [variante1, variante2, ...]
     variantes_enum: HashMap<String, Vec<String>>,
-    /// F4-T4: campos por clase (clase → campo → tipo declarado).
+    /// campos por clase (clase → campo → tipo declarado).
     campos_clase: HashMap<String, HashMap<String, Option<Tipo>>>,
-    /// F4-T4: métodos por nombre (método → tipo de retorno), para inferir
+    /// métodos por nombre (método → tipo de retorno), para inferir
     /// llamadas a método (`objeto.metodo()`).
     retornos_metodos: HashMap<String, Tipo>,
-    /// F4-T4: tipo de retorno inferido para funciones sin anotación.
+    /// tipo de retorno inferido para funciones sin anotación.
     retornos_inferidos: HashMap<String, Tipo>,
     // Design by Contract
     /// True cuando se están verificando postcondiciones (asegura)
@@ -1191,11 +1285,34 @@ pub struct TypeChecker {
     tipo_retorno_actual: Option<Tipo>,
     linea_actual: usize,
     columna_actual: usize,
+    /// modo estricto (`estricto: true` en `forja.yaml`). Por defecto
+    /// `false`: el comportamiento permisivo histórico no cambia.
+    estricto: bool,
+    /// nombres de funciones que no se declaran en el programa (builtins y
+    /// nativas). Sólo se usan en modo estricto para no reportar falsos positivos.
+    funciones_externas: std::collections::HashSet<String>,
+    /// ¿se exige que toda función llamada esté declarada? El pipeline lo
+    /// desactiva cuando el programa importa módulos (no puede saber qué aportan).
+    exigir_funciones_declaradas: bool,
 }
 
 impl Default for TypeChecker {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Nombre canónico de una variante de enum.
+///
+/// `Algo`/`Nada` son los constructores que documentan los ejemplos para
+/// `Opcion`, pero el prelude la declara como `Alguno(T) | Ninguno`. Sin
+/// normalizar, un `coincidir` con `caso Algo(v)` se reportaba como no
+/// exhaustivo ("faltan Alguno, Ninguno"), un falso positivo.
+fn variante_canonica(nombre: &str) -> &str {
+    match nombre {
+        "Algo" => "Alguno",
+        "Nada" => "Ninguno",
+        otra => otra,
     }
 }
 
@@ -1216,13 +1333,85 @@ impl TypeChecker {
             tipo_retorno_actual: None,
             linea_actual: 1,
             columna_actual: 1,
+            estricto: false,
+            funciones_externas: std::collections::HashSet::new(),
+            exigir_funciones_declaradas: false,
         }
+    }
+
+    /// activa el modo estricto (nulabilidad, `Opcion` y funciones
+    /// declaradas). El default es permisivo.
+    pub fn set_estricto(&mut self, activo: bool) {
+        self.estricto = activo;
+    }
+
+    /// ¿Está activo el modo estricto?
+    pub fn estricto(&self) -> bool {
+        self.estricto
+    }
+
+    /// activa el chequeo de "función declarada"(sólo en modo estricto y
+    /// sólo si el programa no importa módulos).
+    pub fn set_exigir_funciones_declaradas(&mut self, activo: bool) {
+        self.exigir_funciones_declaradas = activo;
+    }
+
+    /// nombres de funciones que resuelve el runtime (builtins y nativas),
+    /// para que el chequeo de "función declarada" no las marque como error.
+    pub fn set_funciones_externas(&mut self, nombres: impl IntoIterator<Item = String>) {
+        self.funciones_externas = nombres.into_iter().collect();
+    }
+
+    /// registra un error de tipo del modo estricto en la posición actual.
+    fn error_estricto(&mut self, mensaje: String, ayuda: &str) {
+        let (linea, columna) = (self.linea_actual, self.columna_actual);
+        self.errores.push(ErrorForja::con_codigo(
+            ErrorTipo::ErrorDeTipo,
+            linea,
+            columna,
+            Span::punto(columna),
+            &mensaje,
+            ayuda,
+        ));
+    }
+
+    /// con el modo estricto activo, ¿es ilegal esta asignación?
+    ///
+    /// Dos reglas: `Nulo` sólo entra en `Opcion<T>` y `Opcion<T>` sólo acepta
+    /// `Nulo`, otro `Opcion` o algo que el checker no puede tipar (constructores
+    /// `Alguno(…)`/`Nada()`). Los genéricos quedan fuera para no romper nada.
+    fn asignacion_estricta_invalida(dest: &Tipo, src: &Tipo) -> Option<String> {
+        match (dest, src) {
+            (Tipo::Parametro(_), _) | (_, Tipo::Parametro(_)) => None,
+            (Tipo::Opcion(_), Tipo::Nulo | Tipo::Opcion(_)) => None,
+            (Tipo::Opcion(interior), _) => Some(format!(
+                "Opcion<{:?}> requiere Algo(…) o Nada(); no se puede asignar {:?}",
+                interior, src
+            )),
+            (_, Tipo::Nulo) => Some(format!(
+                "no se puede asignar Nulo a un tipo que no es Opcion<…> (destino: {:?})",
+                dest
+            )),
+            _ => None,
+        }
+    }
+
+    /// ¿el nombre de una llamada corresponde a algo declarado o conocido?
+    fn llamada_conocida(&self, nombre: &str) -> bool {
+        nombre.contains('.')
+            || self.funciones.contains_key(nombre)
+            || self.funciones_externas.contains(nombre)
+            || self.tabla.obtener(nombre).is_some()
+            || self
+                .variantes_enum
+                .values()
+                .any(|variantes| variantes.iter().any(|v| v == nombre))
     }
 
     /// Retorna un clon del mapa de funciones con sus overloads.
     /// Usado por BytecodeGenerator para resolver sobrecarga en codegen.
     ///
-    /// F1-T6: API pública consumida por `lib.rs` y los tests; en el binario
+    /// API pública consumida por `lib.rs` y los tests; en el binario
     /// `forja` (que re-declara los módulos como privados) no se usa.
     #[allow(dead_code)]
     pub fn obtener_funciones(&self) -> MapaSobrecargas {
@@ -1318,7 +1507,7 @@ impl TypeChecker {
     pub fn analizar(&mut self, programa: &Programa) -> Result<(), Vec<ErrorForja>> {
         // Pasada 0: registrar funciones nativas/built-in
         self.registrar_funciones_nativas();
-        // Pasada 0a (F5-T4): registrar variantes de enum antes de analizar
+        // Pasada 0a: registrar variantes de enum antes de analizar
         // cualquier expresión que las use como constructoras.
         for decl in &programa.declaraciones {
             if let Declaracion::Enum {
@@ -1331,12 +1520,12 @@ impl TypeChecker {
         }
         // Pasada 0b: recolectar definiciones de rasgos
         self.recolectar_rasgos(&programa.declaraciones);
-        // Pasada 0c (F4-T4): recolectar campos/métodos de clases para inferir
+        // Pasada 0c: recolectar campos/métodos de clases para inferir
         // accesos a miembro y llamadas a método.
         self.recolectar_clases(&programa.declaraciones);
         // Pasada 1: recolectar firmas de funciones
         self.recolectar_funciones(&programa.declaraciones);
-        // Pasada 1b (F4-T4): inferir tipos de retorno de funciones/métodos sin
+        // Pasada 1b: inferir tipos de retorno de funciones/métodos sin
         // anotación `-> Tipo`, iterando hasta un punto fijo para encadenar
         // dependencias entre funciones.
         self.inferir_retornos_funciones(&programa.declaraciones);
@@ -1352,7 +1541,7 @@ impl TypeChecker {
 
     /// Retorna el mapa de nombres de variables a sus tipos inferidos
     ///
-    /// F1-T6: API pública consumida por `lib.rs` y los tests; en el binario
+    /// API pública consumida por `lib.rs` y los tests; en el binario
     /// `forja` (que re-declara los módulos como privados) no se usa.
     #[allow(dead_code)]
     pub fn obtener_tipos_inferidos(&self) -> HashMap<String, Tipo> {
@@ -1629,7 +1818,7 @@ impl TypeChecker {
         }
     }
 
-    /// F4-T4: recolecta campos y tipos de retorno de métodos de cada clase.
+    /// recolecta campos y tipos de retorno de métodos de cada clase.
     fn recolectar_clases(&mut self, declaraciones: &[Declaracion]) {
         for decl in declaraciones {
             if let Declaracion::Clase {
@@ -1654,7 +1843,7 @@ impl TypeChecker {
         }
     }
 
-    /// F4-T4: infiere el tipo de retorno de funciones y métodos sin anotación
+    /// infiere el tipo de retorno de funciones y métodos sin anotación
     /// `-> Tipo`, a partir de sus sentencias `retornar`. Itera hasta un punto
     /// fijo (máx. 5 pasadas) para encadenar funciones que se llaman entre sí.
     fn inferir_retornos_funciones(&mut self, declaraciones: &[Declaracion]) {
@@ -1712,7 +1901,7 @@ impl TypeChecker {
         }
     }
 
-    /// F4-T4: infiere el tipo de retorno del cuerpo de una función. Aísla la
+    /// infiere el tipo de retorno del cuerpo de una función. Aísla la
     /// inferencia (no reporta errores) y unifica los tipos de los `retornar`.
     fn inferir_retorno_de_cuerpo(
         &mut self,
@@ -1820,7 +2009,7 @@ impl TypeChecker {
         }
     }
 
-    /// F4-T4: unifica los tipos de varios `retornar`. Promociona la aritmética
+    /// unifica los tipos de varios `retornar`. Promociona la aritmética
     /// mixta (Entero < Decimal < Exacto) e ignora `Nulo`/genéricos; si hay
     /// tipos concretos incompatibles, no infiere (devuelve `None`).
     fn unificar_retornos(tipos: Vec<Tipo>) -> Option<Tipo> {
@@ -1875,6 +2064,18 @@ impl TypeChecker {
                     (None, Some(val)) => self.inferir_tipo(val), // Inferir del valor
                     (None, None) => None,            // Sin tipo ni valor
                 };
+                // en modo estricto, el valor debe caber en la anotación
+                // (Nulo sólo en Opcion<T>; Opcion<T> sólo con Algo/Nada).
+                if let (true, Some(t_dest), Some(val)) = (self.estricto, tipo, valor) {
+                    if let Some(t_src) = self.inferir_tipo(val) {
+                        if let Some(msg) = Self::asignacion_estricta_invalida(t_dest, &t_src) {
+                            self.error_estricto(
+                                msg,
+                                "Usá el tipo correcto o envolvé el valor con Algo(…).",
+                            );
+                        }
+                    }
+                }
                 if let Some(ref tipo) = tipo_inferido {
                     self.tipos.insert(nombre.clone(), tipo.clone());
                 }
@@ -1894,7 +2095,7 @@ impl TypeChecker {
                 let tipo_valor = self.inferir_tipo(valor);
                 if let Some(info) = self.tabla.obtener(nombre) {
                     if let (Some(t_dest), Some(t_src)) = (&info.tipo, &tipo_valor) {
-                        // F4-T4: reportar el error cuando la asignación entre
+                        // reportar el error cuando la asignación entre
                         // primitivos concretos es claramente incompatible. Para
                         // el resto (Nulo, clases, arreglos, genéricos, coerciones)
                         // se mantiene la lenidad histórica.
@@ -1910,6 +2111,14 @@ impl TypeChecker {
                                 ),
                                 "Usá el tipo correcto para la asignación.",
                             ));
+                        } else if self.estricto {
+                            // nulabilidad y Opcion en asignaciones.
+                            if let Some(msg) = Self::asignacion_estricta_invalida(t_dest, t_src) {
+                                self.error_estricto(
+                                    msg,
+                                    "Usá el tipo correcto o envolvé el valor con Algo(…).",
+                                );
+                            }
                         }
                     }
                 }
@@ -1971,7 +2180,7 @@ impl TypeChecker {
                             .declarar(&param.nombre, param.mutable, 0, 0, param.tipo.clone());
                 }
                 // Guardar tipo de retorno para resolver 'resultado' en postcondiciones.
-                // F4-T4: si no hay anotación, usar el tipo de retorno inferido.
+                // si no hay anotación, usar el tipo de retorno inferido.
                 let retorno_efectivo = tipo_retorno
                     .clone()
                     .or_else(|| self.retornos_inferidos.get(nombre).cloned());
@@ -2052,7 +2261,7 @@ impl TypeChecker {
                     }
                     // Guardar tipo de retorno para 'resultado' en postcondiciones del método
                     let tipo_retorno_anterior = self.tipo_retorno_actual.clone();
-                    // F4-T4: si el método no está anotado, usar el retorno inferido.
+                    // si el método no está anotado, usar el retorno inferido.
                     self.tipo_retorno_actual = metodo
                         .tipo_retorno
                         .clone()
@@ -2135,15 +2344,54 @@ impl TypeChecker {
                 // Verificar que el rasgo existe
                 if let Some(firmas) = self.rasgos.get(rasgo_nombre) {
                     // Verificar que todos los métodos del rasgo están implementados
+                    // **con la misma firma** (antes sólo se comparaba el
+                    // nombre, así que una implementación con otro tipo de retorno
+                    // o distinta aridad compilaba igual).
                     for firma in firmas {
-                        let implementado = metodos.iter().any(|m| m.nombre == firma.nombre);
-                        if !implementado {
+                        let Some(imp) = metodos.iter().find(|m| m.nombre == firma.nombre) else {
                             self.errores.push(ErrorForja::new(
                                 ErrorTipo::ErrorSemantico, self.linea_actual, self.columna_actual,
                                 &format!("El rasgo '{}' requiere el método '{}' que no está implementado en '{}'.",
                                     rasgo_nombre, firma.nombre, clase_nombre),
                                 &format!("Implementá el método '{}' en la clase '{}'.", firma.nombre, clase_nombre),
                             ));
+                            continue;
+                        };
+                        if imp.parametros.len() != firma.parametros.len() {
+                            self.errores.push(ErrorForja::new(
+                                ErrorTipo::ErrorSemantico, self.linea_actual, self.columna_actual,
+                                &format!(
+                                    "El método '{}' de '{}' declara {} parámetro(s) y el rasgo '{}' declara {}.",
+                                    firma.nombre,
+                                    clase_nombre,
+                                    imp.parametros.len(),
+                                    rasgo_nombre,
+                                    firma.parametros.len()
+                                ),
+                                "Igualá la firma del método con la del rasgo.",
+                            ));
+                        }
+                        // El retorno se compara **modulo parámetros genéricos**
+                        // (`T` del rasgo vs el tipo concreto de la implementación)
+                        // y sólo cuando la implementación lo declara: si lo omite,
+                        // se infiere del cuerpo y no es un error.
+                        if let (Some(retorno_rasgo), Some(retorno_impl)) =
+                            (&firma.tipo_retorno, &imp.tipo_retorno)
+                        {
+                            if !firma_compatible(retorno_impl, retorno_rasgo) {
+                                self.errores.push(ErrorForja::new(
+                                    ErrorTipo::ErrorSemantico, self.linea_actual, self.columna_actual,
+                                    &format!(
+                                        "El método '{}' de '{}' devuelve {:?} y el rasgo '{}' declara {:?}.",
+                                        firma.nombre,
+                                        clase_nombre,
+                                        imp.tipo_retorno,
+                                        rasgo_nombre,
+                                        firma.tipo_retorno
+                                    ),
+                                    "El tipo de retorno de la implementación debe coincidir con el del rasgo.",
+                                ));
+                            }
                         }
                     }
                 } else {
@@ -2241,7 +2489,7 @@ impl TypeChecker {
     }
 
     /// Infiere el tipo de una expresión recursivamente
-    /// Devuelve el nombre del enum al que pertenece una variante (F5-T4).
+    /// Devuelve el nombre del enum al que pertenece una variante.
     fn enum_de_variante(&self, nombre: &str) -> Option<String> {
         self.variantes_enum
             .iter()
@@ -2289,7 +2537,7 @@ impl TypeChecker {
             Expresion::Identificador { nombre, .. } => match nombre.as_str() {
                 "verdadero" | "falso" => Some(Tipo::Booleano),
                 _ => {
-                    // F5-T4: variantes de enum sin payload y funciones como valor.
+                    // variantes de enum sin payload y funciones como valor.
                     if let Some(enum_nombre) = self.enum_de_variante(nombre) {
                         return Some(Tipo::Clase(enum_nombre));
                     }
@@ -2368,13 +2616,24 @@ impl TypeChecker {
                     // Función no registrada en el type checker — no emitir error.
                     // En un lenguaje dinámicamente tipado, muchas funciones se resuelven
                     // en runtime por la VM (builtins, métodos de string, nativos, etc.).
+                    // en modo estricto sí es error, salvo builtins/nativas
+                    // (lista externa), closures en variables y constructores de enum.
+                    if self.estricto
+                        && self.exigir_funciones_declaradas
+                        && !self.llamada_conocida(nombre)
+                    {
+                        self.error_estricto(
+                            format!("Función no declarada: '{}'", nombre),
+                            "Declará la función o quitá el modo estricto (--estricto).",
+                        );
+                    }
                     None
                 } else if let Some(overloads) = overloads_clone {
                     let idx = self.resolver_sobrecarga(nombre, &overloads, &tipos_args, 0, 0);
                     if let Some(idx) = idx {
                         if let Some((ref params, ref retorno, ref params_tipo)) = overloads.get(idx)
                         {
-                            // F4-T4: si la función no tiene anotación, usar el
+                            // si la función no tiene anotación, usar el
                             // tipo de retorno inferido de su cuerpo.
                             let ret_efectivo = retorno
                                 .clone()
@@ -2409,7 +2668,7 @@ impl TypeChecker {
             }
 
             Expresion::AccesoMiembro { objeto, miembro } => {
-                // F4-T4: resolver el tipo del campo a partir de la clase del
+                // resolver el tipo del campo a partir de la clase del
                 // objeto (si el campo tiene tipo declarado).
                 let t_obj = self.inferir_tipo_con_depth(objeto, depth + 1);
                 match t_obj {
@@ -2452,10 +2711,15 @@ impl TypeChecker {
             Expresion::Grupo(expr) => self.inferir_tipo_con_depth(expr, depth + 1),
 
             Expresion::Index { objeto, indice } => {
-                // F4-T4: el índice de un arreglo devuelve su tipo elemento.
+                // el índice de un arreglo devuelve su tipo elemento.
                 let t_obj = self.inferir_tipo_con_depth(objeto, depth + 1);
                 let _ = self.inferir_tipo_con_depth(indice, depth + 1);
                 match t_obj {
+                    // Un `[]` vacío infiere `Arreglo(Nulo)` como marcador; el
+                    // elemento es desconocido, no Nulo (si no, en --estricto
+                    // `max = frecuencias[j]` de un arreglo vacío daba
+                    // "no se puede asignar Nulo a Entero").
+                    Some(Tipo::Arreglo(inner)) if matches!(*inner, Tipo::Nulo) => None,
                     Some(Tipo::Arreglo(inner)) => Some(*inner),
                     Some(Tipo::Texto) => Some(Tipo::Texto),
                     otro => otro,
@@ -2473,7 +2737,7 @@ impl TypeChecker {
             Expresion::Coincidir { expr, brazos } => {
                 let tipo_expr = self.inferir_tipo_con_depth(expr, depth + 1);
                 for brazo in brazos {
-                    // F5-T4: las variables ligadas por el patrón (`Circulo(r)`)
+                    // las variables ligadas por el patrón (`Circulo(r)`)
                     // deben existir en el ámbito del brazo también en el
                     // TypeChecker, no sólo en el BorrowChecker.
                     self.tabla.entrar_ambito();
@@ -2494,7 +2758,9 @@ impl TypeChecker {
                         for brazo in brazos {
                             match &brazo.patron {
                                 Patron::Constructor(nombre, _) => {
-                                    if let Some(pos) = variantes.iter().position(|v| v == nombre) {
+                                    if let Some(pos) = variantes.iter().position(|v| {
+                                        variante_canonica(v) == variante_canonica(nombre)
+                                    }) {
                                         cubiertas[pos] = true;
                                     }
                                 }
@@ -2664,6 +2930,16 @@ impl TypeChecker {
                 // arr[i] = val retorna el valor asignado
                 tipo_valor
             }
+            Expresion::AsignacionCompuesta {
+                objetivo,
+                operador,
+                valor,
+            } => {
+                let t_obj = self.inferir_tipo_con_depth(objetivo, depth + 1);
+                let t_val = self.inferir_tipo_con_depth(valor, depth + 1);
+                // El resultado tiene el tipo del objetivo tras aplicar el operador.
+                self.verificar_binaria(t_obj, t_val, operador)
+            }
             Expresion::Ok(expr) => {
                 let tipo = self.inferir_tipo_con_depth(expr, depth + 1);
                 // Ok(valor) → Resultado<Tipo, Texto>
@@ -2818,7 +3094,7 @@ impl TypeChecker {
                     | (Some(Tipo::Decimal), Some(Tipo::Exacto)) => Some(Tipo::Exacto),
                     (Some(Tipo::Texto), _) => Some(Tipo::Texto), // texto + cualquier cosa = texto
                     (_, Some(Tipo::Texto)) => Some(Tipo::Texto),
-                    // F4-T4: un parámetro de tipo genérico (<T>) puede ser
+                    // un parámetro de tipo genérico (<T>) puede ser
                     // numérico o texto; se trata como desconocido (sin error).
                     (Some(Tipo::Parametro(_)), _) | (_, Some(Tipo::Parametro(_))) => None,
                     (None, _) | (_, None) => None, // tipo genérico / desconocido
@@ -2836,7 +3112,7 @@ impl TypeChecker {
                     | (Some(Tipo::Entero), Some(Tipo::Exacto)) => Some(Tipo::Exacto),
                     (Some(Tipo::Exacto), Some(Tipo::Decimal))
                     | (Some(Tipo::Decimal), Some(Tipo::Exacto)) => Some(Tipo::Exacto),
-                    // F4-T4: parámetro genérico (<T>) → tipo desconocido.
+                    // parámetro genérico (<T>) → tipo desconocido.
                     (Some(Tipo::Parametro(_)), _) | (_, Some(Tipo::Parametro(_))) => None,
                     (None, _) | (_, None) => None, // tipo genérico / desconocido
                     (Some(Tipo::Entero), _) | (_, Some(Tipo::Entero)) => Some(Tipo::Entero),
@@ -2879,7 +3155,7 @@ impl TypeChecker {
 /// Función pública: infiere los tipos de todo un programa
 /// y retorna un HashMap<String, Tipo> con los tipos de cada variable.
 ///
-/// F1-T6: API pública de conveniencia; no se usa internamente pero se
+/// API pública de conveniencia; no se usa internamente pero se
 /// conserva como superficie de la librería.
 #[allow(dead_code)]
 pub fn inferir_tipos_programa(

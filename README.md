@@ -8,4 +8,4 @@ lo que puede reutilizarse sin el backend del compilador.
 
 El crate `forja` reexporta este módulo como `forja::semantics`.
 
-Parte del plan de mejoras (tarea **F3-T8**).
+Parte del plan de mejoras (tarea).
