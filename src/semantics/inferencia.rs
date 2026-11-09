@@ -566,8 +566,8 @@ impl TipoChecker {
             Tipo::Arreglo(inner) => {
                 Tipo::Arreglo(Box::new(self.sustituir_parametros_tipo(inner, inferidos)))
             }
-            Tipo::Resultado(ok, err) => Tipo::Resultado(
-                Box::new(self.sustituir_parametros_tipo(ok, inferidos)),
+            Tipo::Resultado(correcto, err) => Tipo::Resultado(
+                Box::new(self.sustituir_parametros_tipo(correcto, inferidos)),
                 Box::new(self.sustituir_parametros_tipo(err, inferidos)),
             ),
             Tipo::Opcion(inner) => {
