@@ -1,6 +1,6 @@
 use super::*;
 
-impl TypeChecker {
+impl TipoChecker {
     /// infiere el tipo de retorno del cuerpo de una función. Aísla la
     /// inferencia (no reporta errores) y unifica los tipos de los `retornar`.
     pub(crate) fn inferir_retorno_de_cuerpo(

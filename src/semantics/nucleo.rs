@@ -1,8 +1,8 @@
 use super::*;
 
-impl TypeChecker {
+impl TipoChecker {
     pub fn new() -> Self {
-        TypeChecker {
+        TipoChecker {
             tabla: TablaSimbolos::new(),
             errores: Vec::new(),
             funciones: std::collections::HashMap::new(),
@@ -25,7 +25,7 @@ impl TypeChecker {
 
     /// activa el modo estricto (nulabilidad, `Opcion` y funciones
     /// declaradas). El default es permisivo.
-    pub fn set_estricto(&mut self, activo: bool) {
+    pub fn fijar_estricto(&mut self, activo: bool) {
         self.estricto = activo;
     }
 
@@ -36,13 +36,13 @@ impl TypeChecker {
 
     /// activa el chequeo de "función declarada"(sólo en modo estricto y
     /// sólo si el programa no importa módulos).
-    pub fn set_exigir_funciones_declaradas(&mut self, activo: bool) {
+    pub fn fijar_exigir_funciones_declaradas(&mut self, activo: bool) {
         self.exigir_funciones_declaradas = activo;
     }
 
     /// nombres de funciones que resuelve el runtime (builtins y nativas),
     /// para que el chequeo de "función declarada" no las marque como error.
-    pub fn set_funciones_externas(&mut self, nombres: impl IntoIterator<Item = String>) {
+    pub fn fijar_funciones_externas(&mut self, nombres: impl IntoIterator<Item = String>) {
         self.funciones_externas = nombres.into_iter().collect();
     }
 

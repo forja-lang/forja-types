@@ -1,6 +1,6 @@
 use super::*;
 
-impl TypeChecker {
+impl TipoChecker {
     /// Infiere el tipo de una expresión recursivamente
     /// Devuelve el nombre del enum al que pertenece una variante.
     pub(crate) fn enum_de_variante(&self, nombre: &str) -> Option<String> {
@@ -653,13 +653,13 @@ impl TypeChecker {
         }
     }
 
-    pub(crate) fn error_tipo(&mut self, msg: &str) {
+    pub(crate) fn error_tipo(&mut self, mensaje: &str) {
         self.errores.push(ErrorForja::con_codigo(
             ErrorTipo::ErrorDeTipo,
             self.linea_actual,
             self.columna_actual,
             Span::punto(self.columna_actual),
-            msg,
+            mensaje,
             "Revisá los tipos de las expresiones.",
         ));
     }

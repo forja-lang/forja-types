@@ -503,7 +503,7 @@ impl TablaSimbolos {
 }
 
 /// Analizador semántico / Borrow Checker para Forja (fa)
-pub struct BorrowChecker {
+pub struct PrestamoChecker {
     tabla: TablaSimbolos,
     errores: Vec<ErrorForja>,
     #[allow(dead_code)]
@@ -521,13 +521,13 @@ pub struct BorrowChecker {
     estricto: bool,
 }
 
-impl Default for BorrowChecker {
+impl Default for PrestamoChecker {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl BorrowChecker {
+impl PrestamoChecker {
     /// Analiza un HIR ya resuelto reutilizando el checker de préstamos.
     pub fn analizar_hir(
         &mut self,
@@ -544,7 +544,7 @@ impl BorrowChecker {
         self.analizar(&programa)
     }
     pub fn new() -> Self {
-        BorrowChecker {
+        PrestamoChecker {
             tabla: TablaSimbolos::new(),
             errores: Vec::new(),
             contador_temporal: 0,
@@ -557,7 +557,7 @@ impl BorrowChecker {
 
     /// Activa el modo estricto de ownership (lo hace `--estricto` /
     /// `estricto: true` de `forja.yaml` vía [`BorrowChecker::con_estricto`]).
-    pub fn set_estricto(&mut self, activo: bool) {
+    pub fn fijar_estricto(&mut self, activo: bool) {
         self.estricto = activo;
     }
 
@@ -565,7 +565,7 @@ impl BorrowChecker {
     /// `forja.yaml`).
     pub fn con_estricto(activo: bool) -> Self {
         let mut bc = Self::new();
-        bc.set_estricto(activo);
+        bc.fijar_estricto(activo);
         bc
     }
 
@@ -1277,7 +1277,7 @@ impl BorrowChecker {
 
 /// Type Checker para Forja: infiere tipos de todas las expresiones
 /// y verifica compatibilidad en operaciones binarias, llamadas, etc.
-pub struct TypeChecker {
+pub struct TipoChecker {
     tabla: TablaSimbolos,
     errores: Vec<ErrorForja>,
     /// Mapa de función -> Vec de overloads.
@@ -1318,7 +1318,7 @@ pub struct TypeChecker {
     exigir_funciones_declaradas: bool,
 }
 
-impl Default for TypeChecker {
+impl Default for TipoChecker {
     fn default() -> Self {
         Self::new()
     }
@@ -1338,7 +1338,7 @@ pub(crate) fn variante_canonica(nombre: &str) -> &str {
     }
 }
 
-impl TypeChecker {
+impl TipoChecker {
     /// Analiza un HIR ya resuelto. Es el entrypoint para consumidores que
     /// llegan por módulos; reutiliza el checker AST sobre las definiciones.
     pub fn analizar_hir(
@@ -1367,7 +1367,7 @@ pub fn inferir_tipos_programa(
     declaraciones: &[Declaracion],
 ) -> Result<HashMap<String, Tipo>, Vec<ErrorForja>> {
     use crate::ast::Programa;
-    let mut verificador = TypeChecker::new();
+    let mut verificador = TipoChecker::new();
     let programa = Programa {
         spans: Vec::new(),
         nombres: Vec::new(),
@@ -1392,7 +1392,7 @@ mod tests {
         let tokens = lexer.tokenize()?;
         let mut parser = Parser::new(tokens);
         let programa = parser.parse()?;
-        let mut checker = BorrowChecker::new();
+        let mut checker = PrestamoChecker::new();
         checker.analizar(&programa)
     }
 
@@ -1587,7 +1587,7 @@ mod pruebas_del_verificador {
         let tokens = lexer.tokenize()?;
         let mut parser = Parser::new(tokens);
         let programa = parser.parse()?;
-        let mut tc = TypeChecker::new();
+        let mut tc = TipoChecker::new();
         tc.analizar(&programa)
     }
 
