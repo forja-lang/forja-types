@@ -152,7 +152,7 @@ enum EstadoVariable {
 
 /// Información de una variable en la tabla de símbolos
 #[derive(Debug, Clone)]
-struct InfoVariable {
+struct DatosVariable {
     #[allow(dead_code)]
     nombre: String,
     mutable: bool,
@@ -166,7 +166,7 @@ struct InfoVariable {
 
 /// Tabla de símbolos con soporte para scoping
 struct TablaSimbolos {
-    ambitos: Vec<HashMap<String, InfoVariable>>,
+    ambitos: Vec<HashMap<String, DatosVariable>>,
     /// Mapa: nombre_prestatario → (nombre_variable_original, es_mutable)
     /// Permite liberar préstamos automáticamente al salir de ámbito
     prestatarios: HashMap<String, (String, bool)>,
@@ -214,7 +214,7 @@ impl TablaSimbolos {
         }
         ambito_actual.insert(
             nombre.to_string(),
-            InfoVariable {
+            DatosVariable {
                 nombre: nombre.to_string(),
                 mutable,
                 estado: EstadoVariable::Viva,
@@ -226,19 +226,19 @@ impl TablaSimbolos {
         Ok(())
     }
 
-    fn obtener(&self, nombre: &str) -> Option<&InfoVariable> {
+    fn obtener(&self, nombre: &str) -> Option<&DatosVariable> {
         for ambito in self.ambitos.iter().rev() {
-            if let Some(info) = ambito.get(nombre) {
-                return Some(info);
+            if let Some(informacion) = ambito.get(nombre) {
+                return Some(informacion);
             }
         }
         None
     }
 
-    fn obtener_mut(&mut self, nombre: &str) -> Option<&mut InfoVariable> {
+    fn obtener_mut(&mut self, nombre: &str) -> Option<&mut DatosVariable> {
         for ambito in self.ambitos.iter_mut().rev() {
-            if let Some(info) = ambito.get_mut(nombre) {
-                return Some(info);
+            if let Some(informacion) = ambito.get_mut(nombre) {
+                return Some(informacion);
             }
         }
         None
@@ -250,7 +250,7 @@ impl TablaSimbolos {
         linea: usize,
         columna: usize,
     ) -> Result<(), ErrorForja> {
-        let info = self.obtener_mut(nombre).ok_or_else(|| {
+        let informacion = self.obtener_mut(nombre).ok_or_else(|| {
             ErrorForja::new(
                 ErrorTipo::ErrorSemantico,
                 linea,
@@ -260,13 +260,13 @@ impl TablaSimbolos {
             )
         })?;
 
-        match info.estado {
+        match informacion.estado {
             EstadoVariable::Viva => {
-                info.estado = EstadoVariable::Movida;
+                informacion.estado = EstadoVariable::Movida;
                 Ok(())
             }
             EstadoVariable::PrestadaInmutable(0) => {
-                info.estado = EstadoVariable::Movida;
+                informacion.estado = EstadoVariable::Movida;
                 Ok(())
             }
             EstadoVariable::Movida => Err(ErrorForja::con_codigo(
@@ -276,7 +276,7 @@ impl TablaSimbolos {
                 Span::punto(columna),
                 &format!(
                     "La variable '{}' ya fue movida (en línea {}) y no puede ser utilizada de nuevo.",
-                    nombre, info.linea_decl
+                    nombre, informacion.linea_decl
                 ),
                 "Si solo querías leer sus datos, intentá pasarla como un préstamo usando '&'.",
             )),
@@ -312,7 +312,7 @@ impl TablaSimbolos {
         linea: usize,
         columna: usize,
     ) -> Result<(), ErrorForja> {
-        let info = self.obtener_mut(nombre).ok_or_else(|| {
+        let informacion = self.obtener_mut(nombre).ok_or_else(|| {
             ErrorForja::new(
                 ErrorTipo::ErrorSemantico,
                 linea,
@@ -322,7 +322,7 @@ impl TablaSimbolos {
             )
         })?;
 
-        if es_mutable && !info.mutable {
+        if es_mutable && !informacion.mutable {
             return Err(ErrorForja::new(
                 ErrorTipo::ErrorDePropiedad,
                 linea,
@@ -332,12 +332,12 @@ impl TablaSimbolos {
             ));
         }
 
-        match info.estado {
+        match informacion.estado {
             EstadoVariable::Viva => {
                 if es_mutable {
-                    info.estado = EstadoVariable::PrestadaMutable;
+                    informacion.estado = EstadoVariable::PrestadaMutable;
                 } else {
-                    info.estado = EstadoVariable::PrestadaInmutable(1);
+                    informacion.estado = EstadoVariable::PrestadaInmutable(1);
                 }
                 Ok(())
             }
@@ -354,7 +354,7 @@ impl TablaSimbolos {
                         "Usá solo préstamos inmutables (&T) o asegurate de que no haya otros préstamos activos.",
                     ));
                 }
-                info.estado = EstadoVariable::PrestadaInmutable(n + 1);
+                informacion.estado = EstadoVariable::PrestadaInmutable(n + 1);
                 Ok(())
             }
             EstadoVariable::PrestadaMutable => Err(ErrorForja::new(
@@ -381,7 +381,7 @@ impl TablaSimbolos {
     }
 
     fn leer_variable(&self, nombre: &str, linea: usize, columna: usize) -> Result<(), ErrorForja> {
-        let info = self.obtener(nombre).ok_or_else(|| {
+        let informacion = self.obtener(nombre).ok_or_else(|| {
             ErrorForja::new(
                 ErrorTipo::ErrorSemantico,
                 linea,
@@ -391,7 +391,7 @@ impl TablaSimbolos {
             )
         })?;
 
-        match info.estado {
+        match informacion.estado {
             EstadoVariable::Viva | EstadoVariable::PrestadaInmutable(_) => Ok(()),
             // un préstamo mutable es exclusivo: mientras viva no se
             // puede leer el original (sólo a través del prestado).
@@ -411,7 +411,7 @@ impl TablaSimbolos {
                 columna,
                 &format!(
                     "La variable '{}' ya fue movida (declarada en línea {}) y no puede ser utilizada.",
-                    nombre, info.linea_decl
+                    nombre, informacion.linea_decl
                 ),
                 "Usá la nueva variable que ahora posee el valor, o pasá una referencia con '&'.",
             )),
@@ -424,7 +424,7 @@ impl TablaSimbolos {
         linea: usize,
         columna: usize,
     ) -> Result<(), ErrorForja> {
-        let info = self.obtener_mut(nombre).ok_or_else(|| {
+        let informacion = self.obtener_mut(nombre).ok_or_else(|| {
             ErrorForja::new(
                 ErrorTipo::ErrorSemantico,
                 linea,
@@ -434,7 +434,7 @@ impl TablaSimbolos {
             )
         })?;
 
-        if !info.mutable {
+        if !informacion.mutable {
             return Err(ErrorForja::new(
                 ErrorTipo::ErrorDePropiedad,
                 linea,
@@ -444,7 +444,7 @@ impl TablaSimbolos {
             ));
         }
 
-        match info.estado {
+        match informacion.estado {
             EstadoVariable::Viva => Ok(()),
             EstadoVariable::PrestadaInmutable(n) if n > 0 => {
                 Err(ErrorForja::new(
@@ -485,16 +485,16 @@ impl TablaSimbolos {
     }
 
     fn liberar_prestamo(&mut self, nombre: &str, era_mutable: bool) {
-        if let Some(info) = self.obtener_mut(nombre) {
-            match info.estado {
+        if let Some(informacion) = self.obtener_mut(nombre) {
+            match informacion.estado {
                 EstadoVariable::PrestadaInmutable(n) if n > 1 => {
-                    info.estado = EstadoVariable::PrestadaInmutable(n - 1);
+                    informacion.estado = EstadoVariable::PrestadaInmutable(n - 1);
                 }
                 EstadoVariable::PrestadaInmutable(_) => {
-                    info.estado = EstadoVariable::Viva;
+                    informacion.estado = EstadoVariable::Viva;
                 }
                 EstadoVariable::PrestadaMutable if era_mutable => {
-                    info.estado = EstadoVariable::Viva;
+                    informacion.estado = EstadoVariable::Viva;
                 }
                 _ => {}
             }
@@ -601,7 +601,7 @@ impl BorrowChecker {
         }
     }
 
-    fn es_copy(&self, tipo: &Option<Tipo>) -> bool {
+    fn es_copia(&self, tipo: &Option<Tipo>) -> bool {
         match tipo {
             None => true, // Si no sabemos el tipo, asumimos Copy (seguro)
             Some(Tipo::Entero) | Some(Tipo::Decimal) | Some(Tipo::Booleano) | Some(Tipo::Nulo)
@@ -674,9 +674,11 @@ impl BorrowChecker {
                     } = val
                     {
                         // Obtener el tipo de la variable original
-                        let tipo_original =
-                            self.tabla.obtener(id).and_then(|info| info.tipo.clone());
-                        if !self.es_copy(&tipo_original) {
+                        let tipo_original = self
+                            .tabla
+                            .obtener(id)
+                            .and_then(|informacion| informacion.tipo.clone());
+                        if !self.es_copia(&tipo_original) {
                             if let Err(e) = self.tabla.mover_variable(id, *id_linea, *id_columna) {
                                 self.errores.push(e);
                             }
@@ -954,7 +956,7 @@ impl BorrowChecker {
                 // Retornar el tipo de la variable si está registrada
                 self.tabla
                     .obtener(nombre)
-                    .and_then(|info| info.tipo.clone())
+                    .and_then(|informacion| informacion.tipo.clone())
             }
 
             Expresion::Binaria {
@@ -998,14 +1000,14 @@ impl BorrowChecker {
                         } = arg
                         {
                             // Solo mover si el tipo NO es Copy
-                            let info_tipo = self.tabla.obtener(id).and_then(|i| i.tipo.clone());
-                            let es_copy = self.es_copy(&info_tipo);
+                            let tipo_variable = self.tabla.obtener(id).and_then(|i| i.tipo.clone());
+                            let es_copia = self.es_copia(&tipo_variable);
                             // pasar una clase a una función NO la mueve:
                             // el runtime la comparte por índice (igual criterio que
                             // `Arreglo`, `semantics.rs:752`). Asi `--estricto` no
                             // rompe programas que pasan el mismo objeto dos veces.
-                            let es_clase = matches!(info_tipo, Some(Tipo::Clase(_)));
-                            if !es_copy && !es_clase {
+                            let es_clase = matches!(tipo_variable, Some(Tipo::Clase(_)));
+                            if !es_copia && !es_clase {
                                 if let Err(e) = self.tabla.mover_variable(id, *linea, *columna) {
                                     self.errores.push(e);
                                 }
@@ -1365,7 +1367,7 @@ pub fn inferir_tipos_programa(
     declaraciones: &[Declaracion],
 ) -> Result<HashMap<String, Tipo>, Vec<ErrorForja>> {
     use crate::ast::Programa;
-    let mut type_checker = TypeChecker::new();
+    let mut verificador = TypeChecker::new();
     let programa = Programa {
         spans: Vec::new(),
         nombres: Vec::new(),
@@ -1373,8 +1375,8 @@ pub fn inferir_tipos_programa(
         span: None,
         declaraciones: declaraciones.to_vec(),
     };
-    match type_checker.analizar(&programa) {
-        Ok(()) => Ok(type_checker.obtener_tipos_inferidos()),
+    match verificador.analizar(&programa) {
+        Ok(()) => Ok(verificador.obtener_tipos_inferidos()),
         Err(e) => Err(e),
     }
 }
@@ -1385,8 +1387,8 @@ mod tests {
     use crate::lexer::Lexer;
     use crate::parser::Parser;
 
-    fn analizar_source(source: &str) -> Result<(), Vec<ErrorForja>> {
-        let mut lexer = Lexer::new(source);
+    fn analizar_fuente(fuente: &str) -> Result<(), Vec<ErrorForja>> {
+        let mut lexer = Lexer::new(fuente);
         let tokens = lexer.tokenize()?;
         let mut parser = Parser::new(tokens);
         let programa = parser.parse()?;
@@ -1396,173 +1398,177 @@ mod tests {
 
     #[test]
     fn test_variable_declarada() {
-        let result = analizar_source("variable x = 5");
-        assert!(result.is_ok());
+        let resultado = analizar_fuente("variable x = 5");
+        assert!(resultado.is_ok());
     }
 
     #[test]
     fn test_variable_no_declarada() {
-        let result = analizar_source("x = 5");
-        assert!(result.is_err());
+        let resultado = analizar_fuente("x = 5");
+        assert!(resultado.is_err());
     }
 
     #[test]
     fn test_asignacion_inmutable() {
         // 'constante' es inmutable, no se puede reasignar
-        let result = analizar_source("constante x = 5\nx = 10");
-        assert!(result.is_err());
+        let resultado = analizar_fuente("constante x = 5\nx = 10");
+        assert!(resultado.is_err());
     }
 
     #[test]
     fn test_linea_de_error_semantico() {
-        let result = analizar_source("constante x = 5\nx = 10");
-        assert!(result.is_err());
-        let errores = result.unwrap_err();
+        let resultado = analizar_fuente("constante x = 5\nx = 10");
+        assert!(resultado.is_err());
+        let errores = resultado.unwrap_err();
         assert_eq!(errores[0].linea, 2);
     }
 
     #[test]
     fn test_asignacion_mutable() {
         // 'variable' es mutable, se puede reasignar
-        let result = analizar_source("variable x = 5\nx = 10");
-        assert!(result.is_ok());
+        let resultado = analizar_fuente("variable x = 5\nx = 10");
+        assert!(resultado.is_ok());
     }
 
     #[test]
-    fn test_uso_despues_de_move() {
+    fn uso_despues_de_mover() {
         // Con tipos primitivos (i64), no hay move (son Copy).
         // En el futuro, con tipos no-Copy, esto detectará el error.
-        let result = analizar_source("variable x = 5\nvariable y = x\nvariable z = x");
-        assert!(result.is_ok()); // i64 es Copy, no hay move
+        let resultado = analizar_fuente("variable x = 5\nvariable y = x\nvariable z = x");
+        assert!(resultado.is_ok()); // i64 es Copy, no hay move
     }
 
     #[test]
     fn test_prestamo_valido() {
-        let result = analizar_source("variable x = 5\nvariable y = &x");
-        assert!(result.is_ok());
+        let resultado = analizar_fuente("variable x = 5\nvariable y = &x");
+        assert!(resultado.is_ok());
     }
 
     #[test]
     fn test_si_scope() {
-        let result = analizar_source("si (verdadero) { variable x = 1 }");
-        assert!(result.is_ok());
+        let resultado = analizar_fuente("si (verdadero) { variable x = 1 }");
+        assert!(resultado.is_ok());
     }
 
     #[test]
     fn test_funcion_parametros() {
-        let result = analizar_source("funcion suma(a, b) { variable c = a + b }");
-        assert!(result.is_ok());
+        let resultado = analizar_fuente("funcion suma(a, b) { variable c = a + b }");
+        assert!(resultado.is_ok());
     }
 
     // Tests para el bug de columna() con escribir(variable) dentro
 
     #[test]
     fn test_columna_escribir_literal() {
-        let source = "importar gui\nfuncion main() {\n    columna(escribir(\"texto\"))\n}";
-        let result = analizar_source(source);
+        let fuente = "importar gui\nfuncion main() {\n    columna(escribir(\"texto\"))\n}";
+        let resultado = analizar_fuente(fuente);
         assert!(
-            result.is_ok(),
+            resultado.is_ok(),
             "columna(escribir(\"texto\")) debería funcionar: {:?}",
-            result
+            resultado
         );
     }
 
     #[test]
     fn test_columna_escribir_variable() {
-        let source = "importar gui\nfuncion main() {\n    variable resultado = \"\"\n    columna(escribir(resultado))\n}";
-        let result = analizar_source(source);
+        let fuente = "importar gui\nfuncion main() {\n    variable resultado = \"\"\n    columna(escribir(resultado))\n}";
+        let resultado = analizar_fuente(fuente);
         assert!(
-            result.is_ok(),
+            resultado.is_ok(),
             "columna(escribir(variable)) debería funcionar: {:?}",
-            result
+            resultado
         );
     }
 
     #[test]
     fn test_columna_boton_referencia_funcion() {
-        let source = "importar gui\nfuncion validar(u: Texto, p: Texto) -> Texto { retornar \"ok\" }\nfuncion main() {\n    columna(escribir(\"texto\"), boton(\"Ingresar\", &validar))\n}";
-        let result = analizar_source(source);
+        let fuente = "importar gui\nfuncion validar(u: Texto, p: Texto) -> Texto { retornar \"ok\" }\nfuncion main() {\n    columna(escribir(\"texto\"), boton(\"Ingresar\", &validar))\n}";
+        let resultado = analizar_fuente(fuente);
         assert!(
-            result.is_ok(),
+            resultado.is_ok(),
             "columna con boton(&fn) debería funcionar: {:?}",
-            result
+            resultado
         );
     }
 
     #[test]
     fn test_columna_escribir_variable_con_boton() {
-        let source = "importar gui\nfuncion validar(u: Texto, p: Texto) -> Texto { retornar \"ok\" }\nfuncion main() {\n    variable resultado = \"\"\n    columna(escribir(resultado), boton(\"Ingresar\", &validar))\n}";
-        let result = analizar_source(source);
+        let fuente = "importar gui\nfuncion validar(u: Texto, p: Texto) -> Texto { retornar \"ok\" }\nfuncion main() {\n    variable resultado = \"\"\n    columna(escribir(resultado), boton(\"Ingresar\", &validar))\n}";
+        let resultado = analizar_fuente(fuente);
         assert!(
-            result.is_ok(),
+            resultado.is_ok(),
             "columna con escribir(variable) + boton(&fn) debería funcionar: {:?}",
-            result
+            resultado
         );
     }
 
     #[test]
     fn test_llamada_funcion_normal_con_variable() {
         // Test que escribir(variable) funciona fuera de columna
-        let source = "importar gui\nfuncion main() {\n    variable resultado = \"\"\n    escribir(resultado)\n}";
-        let result = analizar_source(source);
+        let fuente = "importar gui\nfuncion main() {\n    variable resultado = \"\"\n    escribir(resultado)\n}";
+        let resultado = analizar_fuente(fuente);
         assert!(
-            result.is_ok(),
+            resultado.is_ok(),
             "escribir(variable) fuera de columna debería funcionar: {:?}",
-            result
+            resultado
         );
     }
 
     #[test]
     fn test_columna_multiple_escribir_con_variable() {
-        let source = "importar gui\nfuncion main() {\n    variable resultado = \"\"\n    columna(\n        escribir(\"A\"),\n        escribir(resultado),\n        escribir(\"B\")\n    )\n}";
-        let result = analizar_source(source);
+        let fuente = "importar gui\nfuncion main() {\n    variable resultado = \"\"\n    columna(\n        escribir(\"A\"),\n        escribir(resultado),\n        escribir(\"B\")\n    )\n}";
+        let resultado = analizar_fuente(fuente);
         assert!(
-            result.is_ok(),
+            resultado.is_ok(),
             "columna con múltiples escribir, uno con variable, debería funcionar: {:?}",
-            result
+            resultado
         );
     }
 
     #[test]
     fn test_si_sin_paren() {
-        let result = analizar_source("funcion main() {\n    variable x = 1\n    si x == 1 {\n        escribir(\"uno\")\n    }\n}");
+        let resultado = analizar_fuente("funcion main() {\n    variable x = 1\n    si x == 1 {\n        escribir(\"uno\")\n    }\n}");
         assert!(
-            result.is_ok(),
+            resultado.is_ok(),
             "si sin parentesis deberia funcionar: {:?}",
-            result
+            resultado
         );
     }
 
     #[test]
     fn test_sino_si() {
-        let result = analizar_source("funcion main() {\n    variable x = 2\n    si x == 1 {\n        escribir(\"uno\")\n    } sino si x == 2 {\n        escribir(\"dos\")\n    } sino {\n        escribir(\"otro\")\n    }\n}");
-        assert!(result.is_ok(), "sino si deberia funcionar: {:?}", result);
+        let resultado = analizar_fuente("funcion main() {\n    variable x = 2\n    si x == 1 {\n        escribir(\"uno\")\n    } sino si x == 2 {\n        escribir(\"dos\")\n    } sino {\n        escribir(\"otro\")\n    }\n}");
+        assert!(
+            resultado.is_ok(),
+            "sino si deberia funcionar: {:?}",
+            resultado
+        );
     }
 
     #[test]
     fn test_sino_si_con_paren() {
-        let result = analizar_source("funcion main() {\n    variable x = 2\n    si (x == 1) {\n        escribir(\"uno\")\n    } sino si (x == 2) {\n        escribir(\"dos\")\n    } sino {\n        escribir(\"otro\")\n    }\n}");
+        let resultado = analizar_fuente("funcion main() {\n    variable x = 2\n    si (x == 1) {\n        escribir(\"uno\")\n    } sino si (x == 2) {\n        escribir(\"dos\")\n    } sino {\n        escribir(\"otro\")\n    }\n}");
         assert!(
-            result.is_ok(),
+            resultado.is_ok(),
             "sino si con parentesis deberia funcionar: {:?}",
-            result
+            resultado
         );
     }
 
     #[test]
     fn test_sino_si_sin_else() {
-        let result = analizar_source("funcion main() {\n    variable x = 2\n    si x == 1 {\n        escribir(\"uno\")\n    } sino si x == 2 {\n        escribir(\"dos\")\n    }\n}");
+        let resultado = analizar_fuente("funcion main() {\n    variable x = 2\n    si x == 1 {\n        escribir(\"uno\")\n    } sino si x == 2 {\n        escribir(\"dos\")\n    }\n}");
         assert!(
-            result.is_ok(),
+            resultado.is_ok(),
             "sino si sin else final deberia funcionar: {:?}",
-            result
+            resultado
         );
     }
 
     #[test]
     fn test_o_si() {
-        let result = analizar_source("funcion main() {\n    variable x = 2\n    si x == 1 {\n        escribir(\"uno\")\n    } o si x == 2 {\n        escribir(\"dos\")\n    } sino {\n        escribir(\"otro\")\n    }\n}");
-        assert!(result.is_ok(), "o si deberia funcionar: {:?}", result);
+        let resultado = analizar_fuente("funcion main() {\n    variable x = 2\n    si x == 1 {\n        escribir(\"uno\")\n    } o si x == 2 {\n        escribir(\"dos\")\n    } sino {\n        escribir(\"otro\")\n    }\n}");
+        assert!(resultado.is_ok(), "o si deberia funcionar: {:?}", resultado);
     }
 }
 
@@ -1571,13 +1577,13 @@ mod tests {
 // ============================================================
 
 #[cfg(test)]
-mod type_checker_tests {
+mod pruebas_del_verificador {
     use super::*;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
 
-    fn type_checkear(source: &str) -> Result<(), Vec<ErrorForja>> {
-        let mut lexer = Lexer::new(source);
+    fn verificar_tipos(fuente: &str) -> Result<(), Vec<ErrorForja>> {
+        let mut lexer = Lexer::new(fuente);
         let tokens = lexer.tokenize()?;
         let mut parser = Parser::new(tokens);
         let programa = parser.parse()?;
@@ -1586,61 +1592,61 @@ mod type_checker_tests {
     }
 
     #[test]
-    fn test_tc_literal_entero() {
-        assert!(type_checkear("variable x = 42").is_ok());
+    fn literal_entero() {
+        assert!(verificar_tipos("variable x = 42").is_ok());
     }
 
     #[test]
-    fn test_tc_suma_enteros() {
-        assert!(type_checkear("variable x = 2 + 3").is_ok());
+    fn suma_enteros() {
+        assert!(verificar_tipos("variable x = 2 + 3").is_ok());
     }
 
     #[test]
-    fn test_tc_suma_entero_decimal() {
-        assert!(type_checkear("variable x = 3 + 2.5").is_ok());
+    fn suma_entero_decimal() {
+        assert!(verificar_tipos("variable x = 3 + 2.5").is_ok());
     }
 
     #[test]
-    fn test_tc_texto_mas_entero_ok() {
-        assert!(type_checkear("escribir(\"hola\" + 5)").is_ok());
+    fn texto_mas_entero_es_valido() {
+        assert!(verificar_tipos("escribir(\"hola\" + 5)").is_ok());
     }
 
     #[test]
-    fn test_tc_booleano_en_si() {
-        assert!(type_checkear("si (verdadero) { escribir(1) }").is_ok());
+    fn booleano_en_si() {
+        assert!(verificar_tipos("si (verdadero) { escribir(1) }").is_ok());
     }
 
     #[test]
-    fn test_tc_entero_en_si_error() {
+    fn entero_en_si_error() {
         // Ahora se permite cualquier tipo como condición
-        let result = type_checkear("si (5) { escribir(1) }");
-        assert!(result.is_ok());
+        let resultado = verificar_tipos("si (5) { escribir(1) }");
+        assert!(resultado.is_ok());
     }
 
     #[test]
-    fn test_tc_operador_y_booleano() {
-        let result = type_checkear("variable x = verdadero && falso");
-        if let Err(ref errors) = result {
+    fn operador_y_booleano() {
+        let resultado = verificar_tipos("variable x = verdadero && falso");
+        if let Err(ref errors) = resultado {
             panic!("Error inesperado: {:?}", errors);
         }
-        assert!(result.is_ok());
+        assert!(resultado.is_ok());
     }
 
     #[test]
-    fn test_tc_operador_y_entero_error() {
+    fn operador_y_entero_error() {
         // Ahora se permite && en cualquier tipo
-        let result = type_checkear("variable x = 5 && 3");
-        assert!(result.is_ok());
+        let resultado = verificar_tipos("variable x = 5 && 3");
+        assert!(resultado.is_ok());
     }
 
     #[test]
-    fn test_tc_arreglo_homogeneo() {
-        assert!(type_checkear("variable arr = [1, 2, 3]").is_ok());
+    fn arreglo_homogeneo() {
+        assert!(verificar_tipos("variable arr = [1, 2, 3]").is_ok());
     }
 
     #[test]
-    fn test_tc_arreglo_heterogeneo_error() {
-        let result = type_checkear("variable arr = [1, \"hola\", 3]");
-        assert!(result.is_ok()); // ahora permite arrays de tipos mixtos
+    fn arreglo_heterogeneo_error() {
+        let resultado = verificar_tipos("variable arr = [1, \"hola\", 3]");
+        assert!(resultado.is_ok()); // ahora permite arrays de tipos mixtos
     }
 }
