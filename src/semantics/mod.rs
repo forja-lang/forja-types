@@ -173,7 +173,7 @@ struct TablaSimbolos {
 }
 
 impl TablaSimbolos {
-    fn new() -> Self {
+    fn nuevo() -> Self {
         TablaSimbolos {
             ambitos: vec![HashMap::new()],
             prestatarios: HashMap::new(),
@@ -204,7 +204,7 @@ impl TablaSimbolos {
     ) -> Result<(), ErrorForja> {
         let ambito_actual = self.ambitos.last_mut().unwrap();
         if ambito_actual.contains_key(nombre) {
-            return Err(ErrorForja::new(
+            return Err(ErrorForja::nuevo(
                 ErrorTipo::ErrorSemantico,
                 linea,
                 columna,
@@ -251,7 +251,7 @@ impl TablaSimbolos {
         columna: usize,
     ) -> Result<(), ErrorForja> {
         let informacion = self.obtener_mut(nombre).ok_or_else(|| {
-            ErrorForja::new(
+            ErrorForja::nuevo(
                 ErrorTipo::ErrorSemantico,
                 linea,
                 columna,
@@ -313,7 +313,7 @@ impl TablaSimbolos {
         columna: usize,
     ) -> Result<(), ErrorForja> {
         let informacion = self.obtener_mut(nombre).ok_or_else(|| {
-            ErrorForja::new(
+            ErrorForja::nuevo(
                 ErrorTipo::ErrorSemantico,
                 linea,
                 columna,
@@ -323,7 +323,7 @@ impl TablaSimbolos {
         })?;
 
         if es_mutable && !informacion.mutable {
-            return Err(ErrorForja::new(
+            return Err(ErrorForja::nuevo(
                 ErrorTipo::ErrorDePropiedad,
                 linea,
                 columna,
@@ -343,7 +343,7 @@ impl TablaSimbolos {
             }
             EstadoVariable::PrestadaInmutable(n) => {
                 if es_mutable {
-                    return Err(ErrorForja::new(
+                    return Err(ErrorForja::nuevo(
                         ErrorTipo::ErrorDePropiedad,
                         linea,
                         columna,
@@ -357,7 +357,7 @@ impl TablaSimbolos {
                 informacion.estado = EstadoVariable::PrestadaInmutable(n + 1);
                 Ok(())
             }
-            EstadoVariable::PrestadaMutable => Err(ErrorForja::new(
+            EstadoVariable::PrestadaMutable => Err(ErrorForja::nuevo(
                 ErrorTipo::ErrorDePropiedad,
                 linea,
                 columna,
@@ -367,7 +367,7 @@ impl TablaSimbolos {
                 ),
                 "Usá un préstamo inmutable (&T) o esperá a que el préstamo mutable termine.",
             )),
-            EstadoVariable::Movida => Err(ErrorForja::new(
+            EstadoVariable::Movida => Err(ErrorForja::nuevo(
                 ErrorTipo::ErrorDePropiedad,
                 linea,
                 columna,
@@ -382,7 +382,7 @@ impl TablaSimbolos {
 
     fn leer_variable(&self, nombre: &str, linea: usize, columna: usize) -> Result<(), ErrorForja> {
         let informacion = self.obtener(nombre).ok_or_else(|| {
-            ErrorForja::new(
+            ErrorForja::nuevo(
                 ErrorTipo::ErrorSemantico,
                 linea,
                 columna,
@@ -395,7 +395,7 @@ impl TablaSimbolos {
             EstadoVariable::Viva | EstadoVariable::PrestadaInmutable(_) => Ok(()),
             // un préstamo mutable es exclusivo: mientras viva no se
             // puede leer el original (sólo a través del prestado).
-            EstadoVariable::PrestadaMutable => Err(ErrorForja::new(
+            EstadoVariable::PrestadaMutable => Err(ErrorForja::nuevo(
                 ErrorTipo::ErrorDePropiedad,
                 linea,
                 columna,
@@ -405,7 +405,7 @@ impl TablaSimbolos {
                 ),
                 "Leé a través de la variable que tomó el préstamo, o esperá a que el ámbito termine.",
             )),
-            EstadoVariable::Movida => Err(ErrorForja::new(
+            EstadoVariable::Movida => Err(ErrorForja::nuevo(
                 ErrorTipo::ErrorDePropiedad,
                 linea,
                 columna,
@@ -425,7 +425,7 @@ impl TablaSimbolos {
         columna: usize,
     ) -> Result<(), ErrorForja> {
         let informacion = self.obtener_mut(nombre).ok_or_else(|| {
-            ErrorForja::new(
+            ErrorForja::nuevo(
                 ErrorTipo::ErrorSemantico,
                 linea,
                 columna,
@@ -435,7 +435,7 @@ impl TablaSimbolos {
         })?;
 
         if !informacion.mutable {
-            return Err(ErrorForja::new(
+            return Err(ErrorForja::nuevo(
                 ErrorTipo::ErrorDePropiedad,
                 linea,
                 columna,
@@ -447,7 +447,7 @@ impl TablaSimbolos {
         match informacion.estado {
             EstadoVariable::Viva => Ok(()),
             EstadoVariable::PrestadaInmutable(n) if n > 0 => {
-                Err(ErrorForja::new(
+                Err(ErrorForja::nuevo(
                     ErrorTipo::ErrorDePropiedad,
                     linea,
                     columna,
@@ -460,7 +460,7 @@ impl TablaSimbolos {
             }
             EstadoVariable::PrestadaInmutable(_) => Ok(()), // n == 0, caso transitorio
             EstadoVariable::PrestadaMutable => {
-                Err(ErrorForja::new(
+                Err(ErrorForja::nuevo(
                     ErrorTipo::ErrorDePropiedad,
                     linea,
                     columna,
@@ -471,7 +471,7 @@ impl TablaSimbolos {
                     "Esperá a que el préstamo mutable termine antes de modificar la variable.",
                 ))
             }
-            EstadoVariable::Movida => Err(ErrorForja::new(
+            EstadoVariable::Movida => Err(ErrorForja::nuevo(
                 ErrorTipo::ErrorDePropiedad,
                 linea,
                 columna,
@@ -523,7 +523,7 @@ pub struct PrestamoChecker {
 
 impl Default for PrestamoChecker {
     fn default() -> Self {
-        Self::new()
+        Self::nuevo()
     }
 }
 
@@ -543,9 +543,9 @@ impl PrestamoChecker {
         };
         self.analizar(&programa)
     }
-    pub fn new() -> Self {
+    pub fn nuevo() -> Self {
         PrestamoChecker {
-            tabla: TablaSimbolos::new(),
+            tabla: TablaSimbolos::nuevo(),
             errores: Vec::new(),
             contador_temporal: 0,
             variantes_enum: HashMap::new(),
@@ -564,7 +564,7 @@ impl PrestamoChecker {
     /// Igual que `new()` con el modo estricto ya fijado (la CLI lo lee de
     /// `forja.yaml`).
     pub fn con_estricto(activo: bool) -> Self {
-        let mut bc = Self::new();
+        let mut bc = Self::nuevo();
         bc.fijar_estricto(activo);
         bc
     }
@@ -799,7 +799,7 @@ impl PrestamoChecker {
             } => {
                 // Validar @test: funciones con @test no deben tener parámetros
                 if atributos.iter().any(|a| a.nombre == "test") && !parametros.is_empty() {
-                    self.errores.push(ErrorForja::new(
+                    self.errores.push(ErrorForja::nuevo(
                         ErrorTipo::ErrorSemantico,
                         0,
                         0,
@@ -907,7 +907,7 @@ impl PrestamoChecker {
     /// Versión interna con control de profundidad para prevenir stack overflow.
     fn analizar_expresion_con_depth(&mut self, expr: &Expresion, depth: u32) -> Option<Tipo> {
         if depth > MAX_AST_PROFUNDIDAD {
-            self.errores.push(ErrorForja::new(
+            self.errores.push(ErrorForja::nuevo(
                 ErrorTipo::ErrorSemantico, 0, 0,
                 "Expresión demasiado grande: se excedió la profundidad máxima de análisis semántico.",
                 "Simplificá la expresión dividiéndola en partes más pequeñas.",
@@ -1126,7 +1126,7 @@ impl PrestamoChecker {
                             .map(|(_, v)| v.clone())
                             .collect();
                         if !no_cubiertas.is_empty() {
-                            self.errores.push(ErrorForja::new(
+                            self.errores.push(ErrorForja::nuevo(
                                 ErrorTipo::ErrorSemantico,
                                 0, 0,
                                 &format!(
@@ -1144,7 +1144,7 @@ impl PrestamoChecker {
                         if matches!(brazo.patron, Patron::Ignorar)
                             || matches!(brazo.patron, Patron::Variable(_))
                         {
-                            self.errores.push(ErrorForja::new(
+                            self.errores.push(ErrorForja::nuevo(
                                 ErrorTipo::ErrorSemantico,
                                 0,
                                 0,
@@ -1320,7 +1320,7 @@ pub struct TipoChecker {
 
 impl Default for TipoChecker {
     fn default() -> Self {
-        Self::new()
+        Self::nuevo()
     }
 }
 
@@ -1367,7 +1367,7 @@ pub fn inferir_tipos_programa(
     declaraciones: &[Declaracion],
 ) -> Result<HashMap<String, Tipo>, Vec<ErrorForja>> {
     use crate::ast::Programa;
-    let mut verificador = TipoChecker::new();
+    let mut verificador = TipoChecker::nuevo();
     let programa = Programa {
         spans: Vec::new(),
         nombres: Vec::new(),
@@ -1390,9 +1390,9 @@ mod tests {
     fn analizar_fuente(fuente: &str) -> Result<(), Vec<ErrorForja>> {
         let mut lexer = Lexer::new(fuente);
         let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(tokens);
+        let mut parser = Parser::nuevo(tokens);
         let programa = parser.parse()?;
-        let mut checker = PrestamoChecker::new();
+        let mut checker = PrestamoChecker::nuevo();
         checker.analizar(&programa)
     }
 
@@ -1585,9 +1585,9 @@ mod pruebas_del_verificador {
     fn verificar_tipos(fuente: &str) -> Result<(), Vec<ErrorForja>> {
         let mut lexer = Lexer::new(fuente);
         let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(tokens);
+        let mut parser = Parser::nuevo(tokens);
         let programa = parser.parse()?;
-        let mut tc = TipoChecker::new();
+        let mut tc = TipoChecker::nuevo();
         tc.analizar(&programa)
     }
 

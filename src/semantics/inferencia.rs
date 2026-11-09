@@ -17,7 +17,7 @@ impl TipoChecker {
     /// Versión interna con control de profundidad para prevenir stack overflow.
     pub(crate) fn inferir_tipo_con_depth(&mut self, expr: &Expresion, depth: u32) -> Option<Tipo> {
         if depth > MAX_AST_PROFUNDIDAD {
-            self.errores.push(ErrorForja::new(
+            self.errores.push(ErrorForja::nuevo(
                 ErrorTipo::ErrorDeTipo, 0, 0,
                 "Expresión demasiado grande: se excedió la profundidad máxima de inferencia de tipos.",
                 "Simplificá la expresión dividiéndola en partes más pequeñas.",
@@ -66,7 +66,7 @@ impl TipoChecker {
                     }
                     self.tabla
                         .obtener(nombre)
-                        .and_then(|info| info.tipo.clone())
+                        .and_then(|informacion| informacion.tipo.clone())
                 }
             },
 
@@ -293,7 +293,7 @@ impl TipoChecker {
                             .map(|(_, v)| v.clone())
                             .collect();
                         if !no_cubiertas.is_empty() {
-                            self.errores.push(ErrorForja::new(
+                            self.errores.push(ErrorForja::nuevo(
                                 ErrorTipo::ErrorDeTipo,
                                 0, 0,
                                 &format!(
@@ -311,7 +311,7 @@ impl TipoChecker {
                         if matches!(brazo.patron, Patron::Ignorar)
                             || matches!(brazo.patron, Patron::Variable(_))
                         {
-                            self.errores.push(ErrorForja::new(
+                            self.errores.push(ErrorForja::nuevo(
                                 ErrorTipo::ErrorDeTipo,
                                 0,
                                 0,
@@ -408,8 +408,8 @@ impl TipoChecker {
             Expresion::Asignacion { variable, valor } => {
                 let tipo_valor = self.inferir_tipo_con_depth(valor, depth + 1);
                 // Verificar compatibilidad de tipos
-                if let Some(info) = self.tabla.obtener(variable) {
-                    if let (Some(t_dest), Some(t_src)) = (&info.tipo, &tipo_valor) {
+                if let Some(informacion) = self.tabla.obtener(variable) {
+                    if let (Some(t_dest), Some(t_src)) = (&informacion.tipo, &tipo_valor) {
                         if t_dest != t_src && t_dest != &Tipo::Nulo {
                             self.errores.push(ErrorForja::con_codigo(
                                 crate::error::ErrorTipo::ErrorDeTipo,
@@ -480,12 +480,12 @@ impl TipoChecker {
             }
             Expresion::Resultado => {
                 // Si la variable "resultado" está declarada en el ámbito actual, usar su tipo.
-                if let Some(info) = self.tabla.obtener("resultado") {
-                    return info.tipo.clone();
+                if let Some(informacion) = self.tabla.obtener("resultado") {
+                    return informacion.tipo.clone();
                 }
                 // 'resultado' solo es válido DENTRO de postcondiciones (asegura)
                 if !self.en_postcondicion {
-                    self.errores.push(ErrorForja::new(
+                    self.errores.push(ErrorForja::nuevo(
                         ErrorTipo::ErrorSemantico,
                         0,
                         0,
@@ -497,7 +497,7 @@ impl TipoChecker {
                     // El tipo de 'resultado' es el tipo de retorno de la función
                     Some(ret.clone())
                 } else {
-                    self.errores.push(ErrorForja::new(
+                    self.errores.push(ErrorForja::nuevo(
                         ErrorTipo::ErrorSemantico,
                         0,
                         0,
@@ -510,7 +510,7 @@ impl TipoChecker {
             Expresion::Anterior(expr) => {
                 // 'anterior(expr)' solo es válido DENTRO de postcondiciones
                 if !self.en_postcondicion {
-                    self.errores.push(ErrorForja::new(
+                    self.errores.push(ErrorForja::nuevo(
                         ErrorTipo::ErrorSemantico,
                         0,
                         0,
@@ -524,7 +524,7 @@ impl TipoChecker {
                     Expresion::Identificador { .. } => { /* ok */ }
                     Expresion::AccesoMiembro { .. } => { /* ok */ }
                     _ => {
-                        self.errores.push(ErrorForja::new(
+                        self.errores.push(ErrorForja::nuevo(
                             ErrorTipo::ErrorSemantico,
                             0,
                             0,

@@ -1,9 +1,9 @@
 use super::*;
 
 impl TipoChecker {
-    pub fn new() -> Self {
+    pub fn nuevo() -> Self {
         TipoChecker {
-            tabla: TablaSimbolos::new(),
+            tabla: TablaSimbolos::nuevo(),
             errores: Vec::new(),
             funciones: std::collections::HashMap::new(),
             tipos: HashMap::new(),

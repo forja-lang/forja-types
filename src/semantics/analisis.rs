@@ -197,8 +197,8 @@ impl TipoChecker {
                 self.linea_actual = *linea;
                 self.columna_actual = *columna;
                 let tipo_valor = self.inferir_tipo(valor);
-                if let Some(info) = self.tabla.obtener(nombre) {
-                    if let (Some(t_dest), Some(t_src)) = (&info.tipo, &tipo_valor) {
+                if let Some(informacion) = self.tabla.obtener(nombre) {
+                    if let (Some(t_dest), Some(t_src)) = (&informacion.tipo, &tipo_valor) {
                         // reportar el error cuando la asignación entre
                         // primitivos concretos es claramente incompatible. Para
                         // el resto (Nulo, clases, arreglos, genéricos, coerciones)
@@ -341,7 +341,7 @@ impl TipoChecker {
                     let tipo = self.inferir_tipo(&inv.condicion);
                     if let Some(ref t) = tipo {
                         if *t != Tipo::Booleano {
-                            self.errores.push(ErrorForja::new(
+                            self.errores.push(ErrorForja::nuevo(
                                 ErrorTipo::ErrorDeTipo,
                                 self.linea_actual, self.columna_actual,
                                 &format!("El invariante de clase debe ser Booleano, no {:?}", t),
@@ -376,7 +376,7 @@ impl TipoChecker {
                         let tipo = self.inferir_tipo(&c.condicion);
                         if let Some(ref t) = tipo {
                             if *t != Tipo::Booleano {
-                                self.errores.push(ErrorForja::new(
+                                self.errores.push(ErrorForja::nuevo(
                                     ErrorTipo::ErrorDeTipo,
                                     self.linea_actual, self.columna_actual,
                                     &format!("La precondición del método '{}' debe ser Booleano, no {:?}", metodo.nombre, t),
@@ -391,7 +391,7 @@ impl TipoChecker {
                         let tipo = self.inferir_tipo(&c.condicion);
                         if let Some(ref t) = tipo {
                             if *t != Tipo::Booleano {
-                                self.errores.push(ErrorForja::new(
+                                self.errores.push(ErrorForja::nuevo(
                                     ErrorTipo::ErrorDeTipo,
                                     self.linea_actual, self.columna_actual,
                                     &format!("La postcondición del método '{}' debe ser Booleano, no {:?}", metodo.nombre, t),
@@ -421,11 +421,11 @@ impl TipoChecker {
                 self.inferir_tipo(indice);
                 self.inferir_tipo(valor);
                 // También podría verificar que nombre es un arreglo
-                if let Some(info) = self.tabla.obtener(nombre) {
-                    if let Some(Tipo::Arreglo(_)) = &info.tipo {
+                if let Some(informacion) = self.tabla.obtener(nombre) {
+                    if let Some(Tipo::Arreglo(_)) = &informacion.tipo {
                         // OK
-                    } else if info.tipo.is_some() {
-                        self.errores.push(ErrorForja::new(
+                    } else if informacion.tipo.is_some() {
+                        self.errores.push(ErrorForja::nuevo(
                             ErrorTipo::ErrorDeTipo,
                             *linea,
                             *columna,
@@ -453,7 +453,7 @@ impl TipoChecker {
                     // o distinta aridad compilaba igual).
                     for firma in firmas {
                         let Some(imp) = metodos.iter().find(|m| m.nombre == firma.nombre) else {
-                            self.errores.push(ErrorForja::new(
+                            self.errores.push(ErrorForja::nuevo(
                                 ErrorTipo::ErrorSemantico, self.linea_actual, self.columna_actual,
                                 &format!("El rasgo '{}' requiere el método '{}' que no está implementado en '{}'.",
                                     rasgo_nombre, firma.nombre, clase_nombre),
@@ -462,7 +462,7 @@ impl TipoChecker {
                             continue;
                         };
                         if imp.parametros.len() != firma.parametros.len() {
-                            self.errores.push(ErrorForja::new(
+                            self.errores.push(ErrorForja::nuevo(
                                 ErrorTipo::ErrorSemantico, self.linea_actual, self.columna_actual,
                                 &format!(
                                     "El método '{}' de '{}' declara {} parámetro(s) y el rasgo '{}' declara {}.",
@@ -483,7 +483,7 @@ impl TipoChecker {
                             (&firma.tipo_retorno, &imp.tipo_retorno)
                         {
                             if !firma_compatible(retorno_impl, retorno_rasgo) {
-                                self.errores.push(ErrorForja::new(
+                                self.errores.push(ErrorForja::nuevo(
                                     ErrorTipo::ErrorSemantico, self.linea_actual, self.columna_actual,
                                     &format!(
                                         "El método '{}' de '{}' devuelve {:?} y el rasgo '{}' declara {:?}.",
@@ -499,7 +499,7 @@ impl TipoChecker {
                         }
                     }
                 } else {
-                    self.errores.push(ErrorForja::new(
+                    self.errores.push(ErrorForja::nuevo(
                         ErrorTipo::ErrorSemantico,
                         self.linea_actual,
                         self.columna_actual,
