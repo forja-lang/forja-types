@@ -1238,7 +1238,7 @@ impl PrestamoChecker {
                 self.analizar_expresion_con_depth(valor, depth + 1);
                 None
             }
-            Expresion::ArraySet { array, valor } => {
+            Expresion::ArregloFijar { array, valor } => {
                 self.analizar_expresion_con_depth(array, depth + 1);
                 self.analizar_expresion_con_depth(valor, depth + 1);
                 None
@@ -1388,10 +1388,10 @@ mod tests {
     use crate::parser::Parser;
 
     fn analizar_fuente(fuente: &str) -> Result<(), Vec<ErrorForja>> {
-        let mut lexer = Lexer::new(fuente);
+        let mut lexer = Lexer::nuevo(fuente);
         let tokens = lexer.tokenize()?;
         let mut parser = Parser::nuevo(tokens);
-        let programa = parser.parse()?;
+        let programa = parser.parsear()?;
         let mut checker = PrestamoChecker::nuevo();
         checker.analizar(&programa)
     }
@@ -1583,10 +1583,10 @@ mod pruebas_del_verificador {
     use crate::parser::Parser;
 
     fn verificar_tipos(fuente: &str) -> Result<(), Vec<ErrorForja>> {
-        let mut lexer = Lexer::new(fuente);
+        let mut lexer = Lexer::nuevo(fuente);
         let tokens = lexer.tokenize()?;
         let mut parser = Parser::nuevo(tokens);
-        let programa = parser.parse()?;
+        let programa = parser.parsear()?;
         let mut tc = TipoChecker::nuevo();
         tc.analizar(&programa)
     }

@@ -437,7 +437,7 @@ impl TipoChecker {
                 // La asignación de campo retorna el valor asignado
                 tipo_valor
             }
-            Expresion::ArraySet { array, valor } => {
+            Expresion::ArregloFijar { array, valor } => {
                 let _tipo_array = self.inferir_tipo_con_depth(array, depth + 1);
                 let tipo_valor = self.inferir_tipo_con_depth(valor, depth + 1);
                 // arr[i] = val retorna el valor asignado
