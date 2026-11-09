@@ -1,6 +1,6 @@
 [package]
 name = "forja-types"
-version = "0.10.1"
+version = "0.10.2"
 edition = "2021"
 description = "Análisis semántico y sistema de tipos de Forja (fa), reutilizable sin backend"
 authors = ["forja-lang"]
