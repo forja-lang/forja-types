@@ -292,6 +292,7 @@ impl TipoChecker {
                 self.tipo_retorno_actual = retorno_efectivo;
                 // Verificar precondiciones: NO estamos en postcondición
                 self.en_postcondicion = false;
+                self.profundidad_funcion += 1;
                 for c in precondiciones {
                     let tipo = self.inferir_tipo(&c.condicion);
                     if let Some(ref t) = tipo {
@@ -326,6 +327,7 @@ impl TipoChecker {
                 // Analizar cuerpo (ya no en postcondición)
                 self.en_postcondicion = false;
                 self.analizar_declaraciones(cuerpo);
+                self.profundidad_funcion = self.profundidad_funcion.saturating_sub(1);
                 self.tabla.salir_ambito();
                 // Restaurar tipo de retorno anterior
                 self.tipo_retorno_actual = tipo_retorno_anterior;
@@ -353,6 +355,7 @@ impl TipoChecker {
                 // Procesar métodos con sus contratos
                 for metodo in metodos {
                     self.tabla.entrar_ambito();
+                    self.profundidad_funcion += 1;
                     let _ = self.tabla.declarar("self", false, 0, 0, None);
                     for param in &metodo.parametros {
                         let _ = self.tabla.declarar(
@@ -403,6 +406,7 @@ impl TipoChecker {
                     // Analizar cuerpo del método
                     self.en_postcondicion = false;
                     self.analizar_declaraciones(&metodo.cuerpo);
+                    self.profundidad_funcion = self.profundidad_funcion.saturating_sub(1);
                     self.tabla.salir_ambito();
                     // Restaurar tipo de retorno
                     self.tipo_retorno_actual = tipo_retorno_anterior;
@@ -524,7 +528,19 @@ impl TipoChecker {
                 }
             }
 
-            Declaracion::Importar(_) => {}
+            Declaracion::Importar(ruta) => {
+                // `importar` solo se procesa a nivel de archivo: dentro de una
+                // función nunca se resuelve y `archivo.leer(...)` devolvía nulo.
+                if self.profundidad_funcion > 0 {
+                    self.errores.push(ErrorForja::nuevo(
+                        ErrorTipo::ErrorSemantico,
+                        0,
+                        0,
+                        &format!("'importar \"{}\"' no puede ir dentro de una función", ruta),
+                        "Movelo al principio del archivo.",
+                    ));
+                }
+            }
             Declaracion::Enum {
                 nombre, variantes, ..
             } => {

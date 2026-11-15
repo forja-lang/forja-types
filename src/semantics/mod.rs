@@ -1278,6 +1278,10 @@ impl PrestamoChecker {
 /// Type Checker para Forja: infiere tipos de todas las expresiones
 /// y verifica compatibilidad en operaciones binarias, llamadas, etc.
 pub struct TipoChecker {
+    /// Profundidad de `funcion`/método que se está analizando. Sirve para
+    /// rechazar `importar` dentro de un cuerpo: no se resuelve y todas sus
+    /// llamadas terminan en `nulo` sin avisar.
+    profundidad_funcion: usize,
     tabla: TablaSimbolos,
     errores: Vec<ErrorForja>,
     /// Mapa de función -> Vec de overloads.

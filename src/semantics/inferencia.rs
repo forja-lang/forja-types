@@ -50,6 +50,14 @@ impl TipoChecker {
             Expresion::Identificador { nombre, .. } => match nombre.as_str() {
                 "verdadero" | "falso" => Some(Tipo::Booleano),
                 _ => {
+                    // La variable visible gana sobre la función homónima. Antes
+                    // se consultaba primero `self.funciones`, así que un parámetro
+                    // llamado igual que una función de otro módulo tomaba el tipo
+                    // de la función: `variable copia = valores` daba Funcion y
+                    // `copia[j]` fallaba con "'copia' no es un arreglo".
+                    if let Some(informacion) = self.tabla.obtener(nombre) {
+                        return informacion.tipo.clone();
+                    }
                     // variantes de enum sin payload y funciones como valor.
                     if let Some(enum_nombre) = self.enum_de_variante(nombre) {
                         return Some(Tipo::Clase(enum_nombre));
@@ -64,9 +72,7 @@ impl TipoChecker {
                             return Some(Tipo::Funcion(params_tipo, Box::new(ret)));
                         }
                     }
-                    self.tabla
-                        .obtener(nombre)
-                        .and_then(|informacion| informacion.tipo.clone())
+                    None
                 }
             },
 

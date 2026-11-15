@@ -3,6 +3,7 @@ use super::*;
 impl TipoChecker {
     pub fn nuevo() -> Self {
         TipoChecker {
+            profundidad_funcion: 0,
             tabla: TablaSimbolos::nuevo(),
             errores: Vec::new(),
             funciones: std::collections::HashMap::new(),
