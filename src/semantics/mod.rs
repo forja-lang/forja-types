@@ -548,7 +548,7 @@ impl PrestamoChecker {
             tabla: TablaSimbolos::nuevo(),
             errores: Vec::new(),
             contador_temporal: 0,
-            variantes_enum: HashMap::new(),
+            variantes_enum: variantes_del_prelude(),
             funciones: std::collections::HashSet::new(),
             ambito_actual: 0,
             estricto: false,
@@ -1342,6 +1342,26 @@ pub(crate) fn variante_canonica(nombre: &str) -> &str {
     }
 }
 
+/// Variantes del prelude, ya registradas al construir los checkers.
+///
+/// El prelude sólo se inyecta en `programa.declaraciones` en la ruta de
+/// `forja::ejecutar`; los demás puntos de entrada (CLI, módulos, LSP) no lo
+/// hacen y `Ninguno` sin paréntesis —que el parser entrega como
+/// `Identificador`— caía en `leer_variable` y se reportaba como
+/// "La variable 'Ninguno' no está declarada". Registrarlas acá cubre todos
+/// los puntos de entrada sin depender de la inyección.
+fn variantes_del_prelude() -> HashMap<String, Vec<String>> {
+    forja_hir::prelude::generar_prelude()
+        .into_iter()
+        .filter_map(|decl| match decl {
+            Declaracion::Enum {
+                nombre, variantes, ..
+            } => Some((nombre, variantes.into_iter().map(|v| v.nombre).collect())),
+            _ => None,
+        })
+        .collect()
+}
+
 impl TipoChecker {
     /// Analiza un HIR ya resuelto. Es el entrypoint para consumidores que
     /// llegan por módulos; reutiliza el checker AST sobre las definiciones.
@@ -1652,5 +1672,20 @@ mod pruebas_del_verificador {
     fn arreglo_heterogeneo_error() {
         let resultado = verificar_tipos("variable arr = [1, \"hola\", 3]");
         assert!(resultado.is_ok()); // ahora permite arrays de tipos mixtos
+    }
+
+    #[test]
+    fn ninguno_sin_parentesis_es_variante_del_prelude() {
+        // El parser entrega `Ninguno` como Identificador y el prelude no se
+        // inyecta en todos los puntos de entrada: no debe ser "variable no
+        // declarada" (ejemplos 83/84/88/103/109).
+        let fuente = "funcion f() -> Opcion<Entero> {\n  retornar Ninguno\n}\nvariable o = f()";
+        assert!(verificar_tipos(fuente).is_ok());
+        // Mismo fuente por el checker de préstamos.
+        let mut lexer = Lexer::nuevo(fuente);
+        let tokens = lexer.tokenize().expect("lexer");
+        let mut parser = Parser::nuevo(tokens);
+        let programa = parser.parsear().expect("parser");
+        assert!(PrestamoChecker::nuevo().analizar(&programa).is_ok());
     }
 }

@@ -10,7 +10,7 @@ impl TipoChecker {
             tipos: HashMap::new(),
             rasgos: std::collections::HashMap::new(),
             tipos_param_genericos: std::collections::HashMap::new(),
-            variantes_enum: HashMap::new(),
+            variantes_enum: variantes_del_prelude(),
             campos_clase: HashMap::new(),
             retornos_metodos: HashMap::new(),
             retornos_inferidos: HashMap::new(),
